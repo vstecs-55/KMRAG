@@ -40,7 +40,7 @@ The Image Route integrates Ollama (Llama 3.2 Vision) to transform visual content
   ```json
   {
     "model": "llama3.2-vision:11b",
-    "prompt": "Describe this technical diagram or image in extreme detail for a knowledge base. Focus on labels, components, connections, and the overall architecture. Convert visual information into a structured textual description.",
+    "prompt": "Describe this technical diagram or image in extreme detail for a knowledge base. Focus on labels, components, connections, and the overall architecture. Convert visual information into a structured textual description using Markdown headings and bullet points for components and their relationships.",
     "stream": false,
     "images": ["<base64_image_data>"]
   }
