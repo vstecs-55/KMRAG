@@ -58,8 +58,41 @@ The Image Route integrates Ollama (Llama 3.2 Vision) to transform visual content
 3. **Switch Node** $\rightarrow$ Evaluates `{{ $json.extension }}`.
 4. **Target Routes** $\rightarrow$ Sends the file to the corresponding handler.
 
+## Hybrid Indexing Stage
+
+Following the routing and extraction stages, all text chunks are passed to the Hybrid Indexing stage to ensure high-precision retrieval of both semantic concepts and technical keywords.
+
+### Embedding Generation
+- **Dense Vectors**:
+    - **Node**: HTTP Request
+    - **Endpoint**: `http://localhost:11434/api/embeddings`
+    - **Model**: `mxbai-embed-large`
+    - **Logic**: Each text chunk is sent to the Ollama API to generate a 1024-dimensional dense vector.
+- **Sparse Vectors**:
+    - **Logic**: Sparse vectors are generated to support keyword-based retrieval (e.g., for specific part numbers like "EPYC 9004"). This is implemented via Qdrant's sparse vector support.
+
+### Qdrant Indexing Configuration
+- **Collection**: `km_knowledge`
+- **Vector Configuration**:
+    - `dense`: 1024 dimensions, Cosine distance.
+    - `sparse`: Sparse vector index for keyword search.
+- **Payload Mapping**:
+    - `text`: The content of the text chunk.
+    - `filename`: Source file name.
+    - `page_number`: Page or section number from the source.
+    - `source_type`: File extension/type (e.g., 'pdf', 'docx', 'xlsx').
+    - `timestamp`: ISO 8601 ingestion date.
+
+### Workflow Flow (Indexing)
+1. **Chunking** $\rightarrow$ Text is split into semantic chunks.
+2. **Ollama Embedding** $\rightarrow$ Call `mxbai-embed-large` $\rightarrow$ Dense Vector.
+3. **Sparse Vectorization** $\rightarrow$ Generate keyword-based sparse vectors.
+4. **Qdrant Upsert** $\rightarrow$ Push dense vector, sparse vector, and payload to `km_knowledge` collection.
+
 ## Verification Plan
 1. Place a `.pdf` file in the `Database/` folder.
 2. Verify the workflow triggers.
 3. Verify the file reaches the "PDF Route" in the Switch node.
 4. Repeat for other supported extensions.
+5. Verify that vectors and payload are correctly stored in Qdrant by querying the collection.
+
