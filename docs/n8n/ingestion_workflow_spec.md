@@ -4,7 +4,7 @@
 The Ingestion Workflow is the entry point for the KM RAG pipeline. It monitors a local directory for new files and routes them to the appropriate processing pipeline based on their file extension.
 
 ## Trigger
-- **Trigger Type**: Local File Trigger (or Cron scanning the directory).
+- **Trigger Type**: Local File Trigger (Polling-based).
 - **Monitored Directory**: `/home/admin/Documents/Projects/KM RAG/Database`
 - **Event**: New file created or updated.
 
@@ -16,11 +16,20 @@ The workflow uses a 'Switch' node to determine the processing path based on the 
 |----------------|--------------|-------------|
 | `.pdf`         | PDF Route    | Extracts text and metadata from PDF files |
 | `.docx`        | DOCX Route   | Extracts text and metadata from Word documents |
-| `.xlsx`        | XLSX Route   | Processes spreadsheet data |
+| `.xlsx`, `.csv`| Spreadsheet Route| Processes spreadsheet and CSV data |
 | `.pptx`        | PPTX Route   | Extracts text from PowerPoint presentations |
-| `.png`         | Image Route  | Performs OCR or image analysis |
-| `.jpg`         | Image Route  | Performs OCR or image analysis |
+| `.png`, `.jpg`, `.jpeg`| Image Route  | Performs OCR or image analysis |
+| `.txt`, `.md`  | Text Route   | Direct text extraction |
 | Other          | Default Route| Logs unsupported file type |
+
+## Extension Extraction Logic
+The file extension is extracted from the filename using a JavaScript expression in a Code node or within the Switch node's expression editor:
+`{{ $json.fileName.split('.').pop().toLowerCase() }}`
+This ensures that the routing is case-insensitive and correctly identifies the trailing extension.
+
+## Error Handling
+- **Unsupported Formats**: Files falling into the "Default Route" are logged to a `rejected_files.log` file in the project root, including the timestamp and full filename.
+- **Read File Failures**: The "Read File" node is configured with "On Error: Continue". A subsequent filter node checks if the file content is empty or if an error property is present, routing failures to an error notification channel to prevent workflow crashes.
 
 ## Workflow Flow
 1. **Trigger** $\rightarrow$ Detects file in `/home/admin/Documents/Projects/KM RAG/Database`.
