@@ -4,25 +4,39 @@ import argparse
 import pandas as pd
 import pdfplumber
 from docx import Document
+from typing import List, Optional
 
-def parse_excel(file_path):
+class ParserError(Exception):
+    """Custom exception for parsing errors."""
+    pass
+
+def parse_excel(file_path: str) -> str:
     """
-    Reads an Excel file and converts it to a Markdown table.
+    Reads an Excel file and converts all its sheets to Markdown tables.
     """
     try:
-        # Read the excel file. By default, it reads the first sheet.
-        df = pd.read_excel(file_path)
-        # Convert to markdown table using to_markdown() which uses tabulate under the hood.
-        return df.to_markdown(index=False)
+        # Read all sheets. sheet_name=None returns a dictionary of dataframes.
+        sheets = pd.read_excel(file_path, sheet_name=None)
+        all_markdown = []
+        for sheet_name, df in sheets.items():
+            # Convert to markdown table using to_markdown() which uses tabulate under the hood.
+            all_markdown.append(f"## Sheet: {sheet_name}\n\n{df.to_markdown(index=False)}")
+        return "\n\n".join(all_markdown)
+    except ImportError:
+        raise ParserError("The 'tabulate' library is required for Excel to Markdown conversion. Please install it via 'pip install tabulate'.")
+    except (ValueError, FileNotFoundError, PermissionError) as e:
+        raise ParserError(f"File error parsing Excel file {file_path}: {str(e)}")
     except Exception as e:
-        return f"Error parsing Excel file {file_path}: {str(e)}"
+        raise ParserError(f"Unexpected error parsing Excel file {file_path}: {str(e)}")
 
-def semantic_chunking(text, chunk_size=1000, overlap=200):
+def semantic_chunking(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
     """
     Splits text into chunks based on logical sections (double newlines)
-    and maintains a context window (overlap).
+    and maintains a context window (overlap). Strictly respects chunk_size.
     """
-    # Split by double newlines to identify logical sections
+    if not text:
+        return []
+
     sections = text.split('\n\n')
     chunks = []
     current_chunk = ""
@@ -32,17 +46,42 @@ def semantic_chunking(text, chunk_size=1000, overlap=200):
         if not section:
             continue
 
-        # If adding this section exceeds chunk_size, we start a new chunk
-        if len(current_chunk) + len(section) > chunk_size:
+        # 1. Handle oversized sections by splitting them into chunks of chunk_size
+        while len(section) > chunk_size:
+            # If we have a current_chunk, save it before processing the oversized section
             if current_chunk:
                 chunks.append(current_chunk)
+                current_chunk = ""
 
-            # Start new chunk with overlap from the end of the previous chunk
-            overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
-            current_chunk = overlap_text + "\n\n" + section
+            # Extract a piece of chunk_size
+            piece = section[:chunk_size]
+            chunks.append(piece)
+
+            # The remaining section starts from the end of the piece minus overlap
+            section = section[chunk_size - overlap:]
+            # Trim section if it's still too long for the very first piece of a new chunk
+            # But we are in a while loop, so it will be handled.
+
+        # 2. Now len(section) <= chunk_size. Try to fit it into current_chunk.
+        if not current_chunk:
+            current_chunk = section
+        elif len(current_chunk) + 2 + len(section) <= chunk_size:
+            current_chunk += "\n\n" + section
         else:
-            if current_chunk:
-                current_chunk += "\n\n" + section
+            # Current chunk is full, save it and start a new one with overlap
+            chunks.append(current_chunk)
+
+            # Calculate overlap from the previous chunk
+            overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
+
+            # Ensure overlap_text + "\n\n" + section fits within chunk_size
+            # If it doesn't, truncate the overlap_text
+            max_overlap_len = chunk_size - len(section) - 2
+            if len(overlap_text) > max_overlap_len:
+                overlap_text = overlap_text[max(0, len(overlap_text) - max_overlap_len):]
+
+            if overlap_text:
+                current_chunk = overlap_text + "\n\n" + section
             else:
                 current_chunk = section
 
@@ -51,7 +90,7 @@ def semantic_chunking(text, chunk_size=1000, overlap=200):
 
     return chunks
 
-def parse_pdf(file_path):
+def parse_pdf(file_path: str) -> str:
     """
     Reads a PDF file and applies semantic chunking.
     """
@@ -65,10 +104,13 @@ def parse_pdf(file_path):
 
         chunks = semantic_chunking(text)
         return "\n\n---CHUNK---\n\n".join(chunks)
+    except (FileNotFoundError, PermissionError) as e:
+        raise ParserError(f"File error parsing PDF file {file_path}: {str(e)}")
     except Exception as e:
-        return f"Error parsing PDF file {file_path}: {str(e)}"
+        # pdfplumber can raise various internal errors, wrapping them in ParserError
+        raise ParserError(f"Error parsing PDF file {file_path}: {str(e)}")
 
-def parse_word(file_path):
+def parse_word(file_path: str) -> str:
     """
     Reads a Word file and applies semantic chunking.
     """
@@ -78,8 +120,11 @@ def parse_word(file_path):
 
         chunks = semantic_chunking(text)
         return "\n\n---CHUNK---\n\n".join(chunks)
+    except (FileNotFoundError, PermissionError) as e:
+        raise ParserError(f"File error parsing Word file {file_path}: {str(e)}")
     except Exception as e:
-        return f"Error parsing Word file {file_path}: {str(e)}"
+        # docx can raise various internal errors, wrapping them in ParserError
+        raise ParserError(f"Error parsing Word file {file_path}: {str(e)}")
 
 def main():
     parser = argparse.ArgumentParser(description="Advanced Text Parsers for RAG")
@@ -93,17 +138,20 @@ def main():
 
     ext = os.path.splitext(file_path)[1].lower()
 
-    if ext in ['.xlsx', '.xls']:
-        result = parse_excel(file_path)
-    elif ext == '.pdf':
-        result = parse_pdf(file_path)
-    elif ext == '.docx':
-        result = parse_word(file_path)
-    else:
-        print(f"Unsupported file extension: {ext}")
+    try:
+        if ext in ['.xlsx', '.xls']:
+            result = parse_excel(file_path)
+        elif ext == '.pdf':
+            result = parse_pdf(file_path)
+        elif ext == '.docx':
+            result = parse_word(file_path)
+        else:
+            print(f"Unsupported file extension: {ext}")
+            sys.exit(1)
+        print(result)
+    except ParserError as e:
+        print(f"Parsing Error: {e}")
         sys.exit(1)
-
-    print(result)
 
 if __name__ == "__main__":
     main()
