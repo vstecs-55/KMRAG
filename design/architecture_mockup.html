@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KM RAG System Architecture Mockup</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f9; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; color: #2c3e50; margin-bottom: 40px; }
+        .architecture-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+        .section { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-top: 5px solid #3498db; }
+        .section.query { border-top-color: #e74c3c; }
+        h2 { color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 0; }
+        .flow { display: flex; flex-direction: column; gap: 15px; margin-top: 20px; }
+        .step { display: flex; align-items: center; background: #f9f9f9; padding: 12px; border-radius: 8px; border: 1px solid #ddd; transition: transform 0.2s; }
+        .step:hover { transform: translateX(10px); background: #f0f7ff; }
+        .step-num { background: #3498db; color: white; width: 25px; height: 25px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 15px; font-weight: bold; flex-shrink: 0; }
+        .query .step-num { background: #e74c3c; }
+        .tech-tag { font-size: 0.8em; background: #e1e1e1; padding: 2px 8px; border-radius: 4px; margin-left: 10px; color: #666; font-family: monospace; }
+        .arrow { text-align: center; font-size: 24px; color: #999; margin: 5px 0; }
+        .highlight { color: #2980b9; font-weight: bold; }
+        .footer { text-align: center; margin-top: 40px; color: #7f8c8d; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>KM RAG System Architecture <br><small style="font-size: 0.6em; color: #7f8d9c;">Advanced + Agentic Approach (DGX Spark Edition)</small></h1>
+
+        <div class="architecture-grid">
+            <!-- Data Pipeline -->
+            <div class="section">
+                <h2>📦 Data Pipeline (Knowledge Ingestion)</h2>
+                <p>กระบวนการเตรียมข้อมูลเข้าสู่ระบบ (รันทุกอาทิตย์)</p>
+                <div class="flow">
+                    <div class="step">
+                        <div class="step-num">1</div>
+                        <div>Local Database Folder <span class="tech-tag">PDF, Word, Excel, PPT, IMG</span></div>
+                    </div>
+                    <div class="arrow">↓</div>
+                    <div class="step">
+                        <div class="step-num">2</div>
+                        <div>n8n Orchestrator & Parsers <span class="tech-tag">n8n / Python</span></div>
+                    </div>
+                    <div class="arrow">↓</div>
+                    <div class="step">
+                        <div class="step-num">3</div>
+                        <div>Visual Intelligence <span class="tech-tag">Llama 3.2 Vision (Ollama)</span><br><small>วิเคราะห์รูปภาพและ Diagram ให้เป็น Text</small></div>
+                    </div>
+                    <div class="arrow">↓</div>
+                    <div class="step">
+                        <div class="step-num">4</div>
+                        <div>Semantic Chunking <span class="tech-tag">Recursive Character Splitter</span><br><small>แบ่งข้อมูลตามความหมาย ไม่ใช่แค่จำนวนคำ</small></div>
+                    </div>
+                    <div class="arrow">↓</div>
+                    <div class="step">
+                        <div class="step-num">5</div>
+                        <div>Hybrid Vector DB <span class="tech-tag">Qdrant / ChromaDB</span><br><small>เก็บทั้ง Vector (Semantic) และ Keyword (Exact)</small></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Query Pipeline -->
+            <div class="section query">
+                <h2>💬 Query Pipeline (User Interaction)</h2>
+                <p>กระบวนการตอบคำถามผ่าน Line Application</p>
+                <div class="flow">
+                    <div class="step">
+                        <div class="step-num">1</div>
+                        <div>User Tags Bot in Line Group <span class="tech-tag">Line Messaging API</span></div>
+                    </div>
+                    <div class="arrow">↓</div>
+                    <div class="step">
+                        <div class="step-num">2</div>
+                        <div>Agentic Intent Analysis <span class="tech-tag">n8n + LLM</span><br><small>วิเคราะห์ว่าต้องค้นหาข้อมูลแบบไหน (Agentic)</small></div>
+                    </div>
+                    <div class="arrow">↓</div>
+                    <div class="step">
+                        <div class="step-num">3</div>
+                        <div>Hybrid Search & Retrieval <span class="tech-tag">Vector + BM25</span><br><small>ค้นหาข้อมูลที่ถูกต้องที่สุดจาก DB</small></div>
+                    </div>
+                    <div class="arrow">↓</div>
+                    <div class="step">
+                        <div class="step-num">4</div>
+                        <div>Reranking & Verification <span class="tech-tag">Cross-Encoder</span><br><small>คัดกรองคำตอบที่ใกล้เคียงที่สุด</small></div>
+                    </div>
+                    <div class="arrow">↓</div>
+                    <div class="step">
+                        <div class="step-num">5</div>
+                        <div>Final Answer Generation <span class="tech-tag">Llama 3.1 70B (Ollama)</span><br><small>สรุปคำตอบที่ถูกต้องและเป็นธรรมชาติ</small></div>
+                    </div>
+                    <div class="arrow">↓</div>
+                    <div class="step">
+                        <div class="step-num">6</div>
+                        <div>Response to Line User <span class="tech-tag">Line Messaging API</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            ออกแบบสำหรับเครื่อง DGX Spark | เน้นความถูกต้องสูงสุด | Privacy-First (Local LLM)
+        </div>
+    </div>
+</body>
+</html>

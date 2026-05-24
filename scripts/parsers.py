@@ -29,6 +29,20 @@ def parse_excel(file_path: str) -> str:
     except Exception as e:
         raise ParserError(f"Unexpected error parsing Excel file {file_path}: {str(e)}")
 
+def parse_text(file_path: str) -> str:
+    """
+    Reads a text file and applies semantic chunking.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+        chunks = semantic_chunking(text)
+        return "\n\n---CHUNK---\n\n".join(chunks)
+    except (FileNotFoundError, PermissionError) as e:
+        raise ParserError(f"File error parsing text file {file_path}: {str(e)}")
+    except Exception as e:
+        raise ParserError(f"Error parsing text file {file_path}: {str(e)}")
+
 def semantic_chunking(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
     """
     Splits text into chunks based on logical sections (double newlines)
@@ -145,6 +159,8 @@ def main():
             result = parse_pdf(file_path)
         elif ext == '.docx':
             result = parse_word(file_path)
+        elif ext in ['.txt', '.md']:
+            result = parse_text(file_path)
         else:
             print(f"Unsupported file extension: {ext}")
             sys.exit(1)
