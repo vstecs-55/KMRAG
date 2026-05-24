@@ -5,17 +5,16 @@ This document provides the exact configuration for the nodes in the Query Workfl
 ## 1. Webhook Node
 - **HTTP Method**: `POST`
 - **Path**: `line-query-webhook`
-- **Response Mode**: `When Last Node Finishes`
+- **Response Mode**: `Immediately`
 - **Extraction (Expression)**:
     - `userId`: `{{ $json.body.events[0].source.userId }}`
     - `text`: `{{ $json.body.events[0].message.text }}`
 
-## 2. Memory Retrieval Node (HTTP Request / Execute Command)
-- **Method**: `Execute Command`
-- **Command**:
-  ```bash
-  sqlite3 "/home/admin/Documents/Projects/KM RAG/chat_history.db" "SELECT role, content FROM history WHERE user_id='{{ $json.userId }}' ORDER BY timestamp DESC LIMIT 5;"
-  ```
+## 2. Memory Retrieval Node (SQLite Node)
+- **Method**: `SQLite Node`
+- **Operation**: `Execute Query`
+- **Query**: `SELECT * FROM history WHERE user_id = ? ORDER BY timestamp DESC LIMIT 5`
+- **Parameters**: `{{ $json.userId }}`
 - **Post-processing**: Use a `Code` node to convert the SQLite output into a JSON array of messages.
 
 ## 3. Intent Router Node (HTTP Request)
@@ -127,7 +126,7 @@ This document provides the exact configuration for the nodes in the Query Workfl
 ## 11. Line Response Integration (HTTP Request)
 - **Method**: `POST`
 - **URL**: `https://api.line.me/v2/bot/message/push`
-- **Authentication**: `Header: Authorization: Bearer hg2DPV5v0z7cyJyuJsBkEBk/j+wNoUnrSLPOTRHL4TzWrqChXDZ1u6VRkzUtRCmEpEnR47gSrNoTurwwWwKit/fffi6PPnNY8WF6HVK1vLFfirestore_json_payload_fix_id_1`
+- **Authentication**: `Header: Authorization: Bearer hg2DPV5v0z7cyJyuJsBkEBk/j+wNoUnrSLPOTRHL4TzWrqChXDZ1u6VRkzUtRCmEpEnR47gSrNoTurwwWwKit/fffi6PPnNY8WF6HVK1vLF`
 - **Body Parameters (JSON)**:
     - `to`: `{{ $node["Webhook"].json.userId }}`
     - `messages`:
@@ -140,12 +139,14 @@ This document provides the exact configuration for the nodes in the Query Workfl
       ]
       ```
 
-## 12. Memory Update (Execute Command)
+## 12. Memory Update (SQLite Node)
 - **Purpose**: บันทึกประวัติการสนทนาลงใน SQLite database เพื่อใช้เป็น Context ในการถามตอบครั้งถัดไป
-- **Command**:
-  ```bash
-  sqlite3 "/home/admin/Documents/Projects/KM RAG/chat_history.db" "INSERT INTO history (user_id, role, content) VALUES ('{{ $node["Webhook"].json.userId }}', 'user', '{{ $node["Webhook"].json.text }}'); INSERT INTO history (user_id, role, content) VALUES ('{{ $node["Webhook"].json.userId }}', 'assistant', '{{ $node["Post-Processing"].json.finalResponse }}');"
-  ```
+- **Method**: `SQLite Node`
+- **Operation**: `Execute Query`
+- **Query**: `INSERT INTO history (user_id, role, content) VALUES (?, ?, ?)`
+- **Parameters**:
+    - User Message: `{{ $node["Webhook"].json.userId }}, 'user', {{ $node["Webhook"].json.text }}`
+    - Assistant Message: `{{ $node["Webhook"].json.userId }}, 'assistant', {{ $node["Post-Processing"].json.finalResponse }}`
 - **Note**: Ensure the n8n user has write permissions to the `.db` file and its parent directory.
 
 ## Testing the Webhook
