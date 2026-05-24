@@ -124,7 +124,33 @@ This document provides the exact configuration for the nodes in the Query Workfl
   return { finalResponse };
   ```
 
+## 11. Line Response Integration (HTTP Request)
+- **Method**: `POST`
+- **URL**: `https://api.line.me/v2/bot/message/push`
+- **Authentication**: `Header: Authorization: Bearer hg2DPV5v0z7cyJyuJsBkEBk/j+wNoUnrSLPOTRHL4TzWrqChXDZ1u6VRkzUtRCmEpEnR47gSrNoTurwwWwKit/fffi6PPnNY8WF6HVK1vLFfirestore_json_payload_fix_id_1`
+- **Body Parameters (JSON)**:
+    - `to`: `{{ $node["Webhook"].json.userId }}`
+    - `messages`:
+      ```json
+      [
+        {
+          "type": "text",
+          "text": "{{ $node["Post-Processing"].json.finalResponse }}"
+        }
+      ]
+      ```
+
+## 12. Memory Update (Execute Command)
+- **Purpose**: บันทึกประวัติการสนทนาลงใน SQLite database เพื่อใช้เป็น Context ในการถามตอบครั้งถัดไป
+- **Command**:
+  ```bash
+  sqlite3 "/home/admin/Documents/Projects/KM RAG/chat_history.db" "INSERT INTO history (user_id, role, content) VALUES ('{{ $node["Webhook"].json.userId }}', 'user', '{{ $node["Webhook"].json.text }}'); INSERT INTO history (user_id, role, content) VALUES ('{{ $node["Webhook"].json.userId }}', 'assistant', '{{ $node["Post-Processing"].json.finalResponse }}');"
+  ```
+- **Note**: Ensure the n8n user has write permissions to the `.db` file and its parent directory.
+
 ## Testing the Webhook
+...
+
 ...
 You can simulate a Line webhook request using the following `curl` command:
 
