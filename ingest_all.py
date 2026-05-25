@@ -3,6 +3,7 @@ import requests
 import json
 import uuid
 import logging
+import time
 from scripts.parsers import parse_pdf, parse_excel, parse_text, parse_word, ParserError
 
 # Configuration
@@ -15,12 +16,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Ingestor")
 
 def get_embedding(text):
-    res = requests.post(f"{OLLAMA_URL}/api/embeddings", json={"model": MODEL_EMBED, "prompt": text})
-    res.raise_for_status()
-    return res.json()["embedding"]
+    for attempt in range(5):
+        try:
+            res = requests.post(f"{OLLAMA_URL}/api/embeddings", json={"model": MODEL_EMBED, "prompt": text}, timeout=90)
+            res.raise_for_status()
+            return res.json()["embedding"]
+        except Exception as e:
+            logger.warning(f"Embedding attempt {attempt+1} failed: {e}")
+            time.sleep(3)
+    raise Exception("Failed to get embedding after 5 attempts")
 
 def ingest_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
+    if ext not in ['.pdf', '.xlsx', '.xls', '.docx', '.txt', '.md']:
+        return
+        
     logger.info(f"Ingesting: {file_path}")
     
     try:
@@ -33,12 +43,11 @@ def ingest_file(file_path):
         elif ext in ['.txt', '.md']:
             content = parse_text(file_path)
         else:
-            logger.warning(f"Unsupported extension: {ext}")
             return
             
-        # Improved chunking: include filename and use smaller chunks
-        chunk_size = 800
-        overlap = 150
+        # Large chunks (3500 chars) to ensure model + specs are together
+        chunk_size = 3500
+        overlap = 500
         
         chunks = []
         if len(content) <= chunk_size:
@@ -51,27 +60,27 @@ def ingest_file(file_path):
                 start += chunk_size - overlap
                 
         points = []
-        import time
+        filename = os.path.basename(file_path)
         for i, chunk in enumerate(chunks):
             if not chunk.strip(): continue
-            # Prepend filename to chunk text to help retrieval and LLM context
-            filename = os.path.basename(file_path)
-            rich_chunk = f"Source File: {filename}\nContent: {chunk}"
-            vector = get_embedding(rich_chunk)
-            point_id = str(uuid.uuid4())
+            
+            # CRITICAL: Define rich_chunk properly before use
+            text_to_embed = f"Source File: {filename}\nTechnical Data:\n{chunk}"
+            
+            time.sleep(1.0) # Conservative delay for stability
+            vector = get_embedding(text_to_embed)
+            
             points.append({
-                "id": point_id,
+                "id": str(uuid.uuid4()),
                 "vector": vector,
                 "payload": {
-                    "text": rich_chunk,
+                    "text": text_to_embed,
                     "filename": filename,
                     "path": file_path,
-                    "chunk_index": i,
-                    "timestamp": time.time()
+                    "chunk_index": i
                 }
             })
             
-        # Upload in batches
         if points:
             res = requests.put(f"{QDRANT_URL}/collections/{COLLECTION_NAME}/points?wait=true", json={"points": points})
             res.raise_for_status()
@@ -81,21 +90,27 @@ def ingest_file(file_path):
         logger.error(f"Error ingesting {file_path}: {e}")
 
 def main():
-    # 1. Reset collection
     logger.info("Resetting collection...")
     requests.delete(f"{QDRANT_URL}/collections/{COLLECTION_NAME}")
     res = requests.put(f"{QDRANT_URL}/collections/{COLLECTION_NAME}", json={
-        "vectors": {"size": 1024, "distance": "Cosine"} # Unnamed vector
+        "vectors": {"size": 1024, "distance": "Cosine"}
     })
     res.raise_for_status()
-    logger.info("Collection reset and created successfully.")
     
-    # 2. Walk through Database directory
     db_path = "Database"
+    target_folders = ["Gigabyte", "Supermicro", "AMD", "Intel"]
+    
+    files_to_ingest = []
     for root, dirs, files in os.walk(db_path):
-        for file in files:
-            file_path = os.path.join(root, file)
-            ingest_file(file_path)
+        # Check if the current path contains one of our target brands
+        if any(brand in root for brand in target_folders):
+            for file in files:
+                files_to_ingest.append(os.path.join(root, file))
+                
+    # Run Ingestion on filtered list
+    logger.info(f"Starting targeted ingestion for {len(files_to_ingest)} files...")
+    for path in files_to_ingest:
+        ingest_file(path)
 
 if __name__ == "__main__":
     main()

@@ -1,479 +1,376 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KM-RAG | SYSTEM CONTROL</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <title>KM RAG Pro - Smart Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
-        :root {
-            --bg-color: #0a0a0b;
-            --panel-bg: #141417;
-            --border-color: #2a2a2e;
-            --text-main: #e2e2e5;
-            --text-dim: #71717a;
-            --accent-green: #00ff9d;
-            --accent-red: #ff4d4d;
-            --accent-amber: #ffb800;
-            --glow-green: rgba(0, 255, 157, 0.2);
-            --glow-red: rgba(255, 77, 77, 0.2);
-            --scanline-color: rgba(18, 16, 16, 0.1);
+        @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;600&family=JetBrains+Mono&display=swap');
+        body { 
+            font-family: 'Prompt', sans-serif; 
+            background: radial-gradient(circle at top right, #1e293b, #0f172a); 
+            color: #f8fafc; 
+            min-height: 100vh;
         }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
+        .glass { 
+            background: rgba(30, 41, 59, 0.6); 
+            backdrop-filter: blur(12px); 
+            border: 1px solid rgba(255, 255, 255, 0.08); 
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
         }
-
-        body {
-            background-color: var(--bg-color);
-            color: var(--text-main);
-            font-family: 'JetBrains Mono', monospace;
-            overflow: hidden;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        /* CRT Scanline Effect */
-        body::before {
-            content: " ";
-            display: block;
-            position: absolute;
-            top: 0; left: 0; bottom: 0; right: 0;
-            background: linear-gradient(var(--scanline-color) 50%, rgba(0, 0, 0, 0) 50%),
-                        linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
-            z-index: 10;
-            background-size: 100% 4px, 3px 100%;
-            pointer-events: none;
-        }
-
-        header {
-            padding: 20px 40px;
-            border-bottom: 2px solid var(--border-color);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: linear-gradient(to bottom, #1a1a1e, var(--bg-color));
-        }
-
-        .system-title {
-            font-size: 1.2rem;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-
-        .status-pill {
-            padding: 4px 12px;
-            border-radius: 2px;
-            font-size: 0.7rem;
-            border: 1px solid var(--border-color);
-            background: var(--panel-bg);
-            transition: all 0.3s ease;
-        }
-
-        .status-pill.healthy {
-            color: var(--accent-green);
-            border-color: var(--accent-green);
-            box-shadow: 0 0 10px var(--glow-green);
-        }
-
-        .status-pill.degraded {
-            color: var(--accent-amber);
-            border-color: var(--accent-amber);
-            box-shadow: 0 0 10px rgba(255, 184, 0, 0.2);
-        }
-
-        .status-pill.critical {
-            color: var(--accent-red);
-            border-color: var(--accent-red);
-            box-shadow: 0 0 10px var(--glow-red);
-        }
-
-        main {
-            flex: 1;
-            display: grid;
-            grid-template-columns: 1fr 350px;
-            gap: 20px;
-            padding: 40px;
-            position: relative;
-        }
-
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            align-content: start;
-        }
-
-        .card {
-            background-color: var(--panel-bg);
-            border: 1px solid var(--border-color);
-            padding: 20px;
-            position: relative;
-            transition: border-color 0.3s ease;
-        }
-
-        .card:hover {
-            border-color: var(--text-dim);
-        }
-
-        .card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 10px;
-        }
-
-        .card-title {
-            font-size: 0.85rem;
-            color: var(--text-dim);
-        }
-
-        .indicator {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background-color: #333;
-            transition: all 0.3s ease;
-        }
-
-        .indicator.online {
-            background-color: var(--accent-green);
-            box-shadow: 0 0 12px var(--accent-green);
-        }
-
-        .indicator.offline {
-            background-color: var(--accent-red);
-            box-shadow: 0 0 12px var(--accent-red);
-        }
-
-        .service-info {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .service-item {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.8rem;
-        }
-
-        .service-label {
-            color: var(--text-dim);
-        }
-
-        .service-value {
-            font-weight: 700;
-        }
-
-        .sidebar {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .control-panel {
-            background-color: var(--panel-bg);
-            border: 1px solid var(--border-color);
-            padding: 25px;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .panel-title {
-            font-size: 0.85rem;
-            color: var(--text-dim);
-            margin-bottom: 10px;
-        }
-
-        .btn {
-            background: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--text-main);
-            font-family: 'JetBrains Mono', monospace;
-            padding: 12px;
-            cursor: pointer;
-            text-transform: uppercase;
-            font-size: 0.8rem;
-            transition: all 0.2s ease;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .btn:hover {
-            background: var(--border-color);
-            color: #fff;
-        }
-
-        .btn-danger {
-            border-color: var(--accent-red);
-            color: var(--accent-red);
-        }
-
-        .btn-danger:hover {
-            background: var(--accent-red);
-            color: #fff;
-            box-shadow: 0 0 20px var(--glow-red);
-        }
-
-        .log-container {
-            flex: 1;
-            background-color: #050506;
-            border: 1px solid var(--border-color);
-            padding: 15px;
-            font-size: 0.7rem;
-            color: #888;
-            overflow-y: auto;
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
-
-        .log-entry {
-            border-left: 2px solid var(--border-color);
-            padding-left: 10px;
-            margin-bottom: 4px;
-        }
-
-        .log-entry.info { border-color: var(--accent-green); color: #aaa; }
-        .log-entry.error { border-color: var(--accent-red); color: var(--accent-red); }
-
-        .pulse {
-            width: 10px;
-            height: 10px;
-            background-color: var(--accent-green);
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 10px;
-            animation: pulse-animation 2s infinite;
-        }
-
-        @keyframes pulse-animation {
-            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 255, 157, 0.7); }
-            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(0, 255, 157, 0); }
-            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 255, 157, 0); }
-        }
-
-        /* Overlay for confirmation */
-        #confirm-overlay {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.85);
-            backdrop-filter: blur(4px);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 100;
-        }
-
-        .confirm-box {
-            background: var(--panel-bg);
-            border: 1px solid var(--accent-red);
-            padding: 30px;
-            max-width: 400px;
-            text-align: center;
-            box-shadow: 0 0 30px var(--glow-red);
-        }
-
-        .confirm-box h2 {
-            color: var(--accent-red);
-            margin-bottom: 20px;
-            font-size: 1rem;
-        }
-
-        .confirm-actions {
-            display: flex;
-            gap: 10px;
-            justify-content: center;
-            margin-top: 20px;
-        }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .online { background-color: #10b981; box-shadow: 0 0 12px #10b981; }
+        .offline { background-color: #ef4444; box-shadow: 0 0 12px #ef4444; }
+        .terminal { font-family: 'JetBrains Mono', monospace; }
+        .progress-bar { height: 6px; border-radius: 3px; background: #334155; overflow: hidden; }
+        .progress-value { height: 100%; transition: width 0.5s ease-out; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
     </style>
 </head>
-<body>
-    <header>
-        <div class="system-title">
-            <span class="pulse" id="global-pulse"></span>
-            KM-RAG SYSTEM CONTROL <span style="color: var(--text-dim)">v1.0.4</span>
-        </div>
-        <div id="system-status" class="status-pill healthy">SYSTEM: HEALTHY</div>
-    </header>
-
-    <main>
-        <div class="dashboard-grid">
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">OLLAMA ENGINE</span>
-                    <div id="status-ollama" class="indicator"></div>
+<body class="p-4 md:p-8">
+    <div class="max-w-[1600px] mx-auto">
+        <!-- Top Navigation -->
+        <header class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+            <div class="flex items-center gap-4">
+                <div class="p-3 bg-blue-600 rounded-2xl shadow-lg shadow-blue-500/20">
+                    <i class="fas fa-brain text-2xl text-white"></i>
                 </div>
-                <div class="service-info">
-                    <div class="service-item">
-                        <span class="service-label">Model</span>
-                        <span class="service-value">Llama 3.3:70b</span>
+                <div>
+                    <h1 class="text-2xl font-bold tracking-tight">KM RAG <span class="text-blue-500">PRO</span></h1>
+                    <p class="text-slate-400 text-sm">Enterprise Knowledge Management System</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-6 glass px-6 py-3 rounded-2xl">
+                <div class="text-right hidden sm:block">
+                    <p class="text-xs text-slate-500 uppercase font-semibold">Active Model</p>
+                    <p id="active-model" class="text-blue-400 font-mono text-sm">Loading...</p>
+                </div>
+                <div class="h-8 w-[1px] bg-slate-700 hidden sm:block"></div>
+                <button onclick="triggerIngest()" class="bg-blue-500/10 hover:bg-blue-500 text-blue-500 hover:text-white px-4 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 border border-blue-500/20">
+                    <i class="fas fa-sync-alt"></i> Update Data
+                </button>
+                <div class="h-8 w-[1px] bg-slate-700 hidden sm:block"></div>
+                <button onclick="restartSystem()" class="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white px-4 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 border border-red-500/20">
+                    <i class="fas fa-power-off"></i> Restart
+                </button>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
+            <!-- Left Panel: Resources & Status -->
+            <div class="xl:col-span-3 flex flex-col gap-6">
+                <!-- Service Status -->
+                <section class="glass p-6 rounded-3xl">
+                    <h2 class="text-lg font-semibold mb-6 flex items-center gap-2">
+                        <i class="fas fa-shield-halved text-emerald-500"></i> Service Infrastructure
+                    </h2>
+                    <div class="space-y-5">
+                        <div class="flex justify-between items-center bg-slate-800/40 p-3 rounded-xl border border-white/5">
+                            <span class="text-slate-300">API Gateway</span>
+                            <div id="status-api" class="flex items-center text-xs font-semibold uppercase tracking-wider">
+                                <span class="status-dot offline"></span> Offline
+                            </div>
+                        </div>
+                        <div class="flex justify-between items-center bg-slate-800/40 p-3 rounded-xl border border-white/5">
+                            <span class="text-slate-300">Ollama Engine</span>
+                            <div id="status-ollama" class="flex items-center text-xs font-semibold uppercase tracking-wider">
+                                <span class="status-dot offline"></span> Offline
+                            </div>
+                        </div>
+                        <div class="flex justify-between items-center bg-slate-800/40 p-3 rounded-xl border border-white/5">
+                            <span class="text-slate-300">Qdrant Vector DB</span>
+                            <div id="status-qdrant" class="flex items-center text-xs font-semibold uppercase tracking-wider">
+                                <span class="status-dot offline"></span> Offline
+                            </div>
+                        </div>
                     </div>
-                    <div class="service-item">
-                        <span class="service-label">Embeddings</span>
-                        <span class="service-value">mxbai-embed-large</span>
+                </section>
+
+                <!-- Hardware Monitor -->
+                <section class="glass p-6 rounded-3xl">
+                    <h2 class="text-lg font-semibold mb-6 flex items-center gap-2">
+                        <i class="fas fa-microchip text-blue-500"></i> Hardware Resources
+                    </h2>
+                    <div class="space-y-6">
+                        <div>
+                            <div class="flex justify-between text-xs mb-2">
+                                <span class="text-slate-400">CPU Usage</span>
+                                <span id="cpu-val" class="text-white font-mono">0%</span>
+                            </div>
+                            <div class="progress-bar"><div id="cpu-bar" class="progress-value bg-blue-500" style="width: 0%"></div></div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-xs mb-2">
+                                <span class="text-slate-400">GPU (NVIDIA)</span>
+                                <span id="gpu-val" class="text-white font-mono">0%</span>
+                            </div>
+                            <div class="progress-bar"><div id="gpu-bar" class="progress-value bg-emerald-500" style="width: 0%"></div></div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-xs mb-2">
+                                <span class="text-slate-400">Memory (RAM)</span>
+                                <span id="ram-val" class="text-white font-mono">0%</span>
+                            </div>
+                            <div class="progress-bar"><div id="ram-bar" class="progress-value bg-purple-500" style="width: 0%"></div></div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-xs mb-2">
+                                <span class="text-slate-400">Storage (Root)</span>
+                                <span id="hdd-val" class="text-white font-mono">0%</span>
+                            </div>
+                            <div class="progress-bar"><div id="hdd-bar" class="progress-value bg-orange-500" style="width: 0%"></div></div>
+                        </div>
                     </div>
-                    <div class="service-item">
-                        <span class="service-label">Status</span>
-                        <span id="val-ollama" class="service-value">Checking...</span>
+                </section>
+
+                <!-- Notification -->
+                <div class="glass p-6 rounded-3xl bg-blue-500/5 border-blue-500/20">
+                    <div class="flex gap-3">
+                        <i class="fas fa-circle-info text-blue-400 mt-1"></i>
+                        <p class="text-xs text-slate-400 leading-relaxed italic">
+                            System is optimized for high-performance technical information retrieval across 4 major hardware brands.
+                        </p>
                     </div>
                 </div>
             </div>
 
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">QDRANT VECTOR DB</span>
-                    <div id="status-qdrant" class="indicator"></div>
-                </div>
-                <div class="service-info">
-                    <div class="service-item">
-                        <span class="service-label">Collection</span>
-                        <span class="service-value">km_knowledge</span>
+            <!-- Right Panel: Real-time Analysis -->
+            <div class="xl:col-span-9">
+                <div class="glass rounded-3xl flex flex-col h-[calc(100vh-180px)] min-h-[600px] overflow-hidden border-white/10">
+                    <div class="p-6 border-b border-white/5 flex justify-between items-center bg-white/2">
+                        <h2 class="text-xl font-semibold flex items-center gap-3">
+                            <span class="relative flex h-3 w-3">
+                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                                <span class="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                            </span>
+                            Live Intelligence Stream
+                        </h2>
+                        <div id="live-indicator" class="hidden flex items-center gap-2 px-3 py-1 bg-blue-500/20 text-blue-400 text-xs rounded-full border border-blue-500/30">
+                            <i class="fas fa-spinner fa-spin"></i> PROCESSING
+                        </div>
                     </div>
-                    <div class="service-item">
-                        <span class="service-label">Mode</span>
-                        <span class="service-value">Hybrid (Dense/Sparse)</span>
-                    </div>
-                    <div class="service-item">
-                        <span class="service-label">Status</span>
-                        <span id="val-qdrant" class="service-value">Checking...</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">LINE WEBHOOK</span>
-                    <div id="status-webhook" class="indicator online"></div>
-                </div>
-                <div class="service-info">
-                    <div class="service-item">
-                        <span class="service-label">Endpoint</span>
-                        <span class="service-value">/webhook</span>
-                    </div>
-                    <div class="service-item">
-                        <span class="service-label">Tunnel</span>
-                        <span class="service-value">Cloudflare v2</span>
-                    </div>
-                    <div class="service-item">
-                        <span class="service-label">Status</span>
-                        <span id="val-webhook" class="service-value">Active</span>
+                    
+                    <div id="flow-container" class="flex-1 overflow-y-auto p-6 space-y-6 terminal text-sm scroll-smooth">
+                        <div class="flex flex-col items-center justify-center h-full text-slate-500 gap-4">
+                            <i class="fas fa-satellite-dish text-4xl opacity-20"></i>
+                            <p class="italic">Standing by for incoming data flows...</p>
+                        </div>
                     </div>
                 </div>
-            </div>
-        </div>
-
-        <div class="sidebar">
-            <div class="control-panel">
-                <div class="panel-title">SYSTEM OPERATIONS</div>
-                <button class="btn" onclick="refreshStatus()">Force Refresh</button>
-                <button class="btn btn-danger" onclick="showConfirm()">System Reset</button>
-            </div>
-            <div class="log-container" id="logs">
-                <div class="log-entry info">[SYSTEM] Booting control interface...</div>
-                <div class="log-entry info">[SYSTEM] Establishing connection to API...</div>
-            </div>
-        </div>
-    </main>
-
-    <div id="confirm-overlay">
-        <div class="confirm-box">
-            <h2>CRITICAL WARNING</h2>
-            <p style="font-size: 0.8rem; color: var(--text-dim);">Are you sure you want to trigger a full system restart? This will temporarily disrupt all services.</p>
-            <div class="confirm-actions">
-                <button class="btn" onclick="hideConfirm()">Cancel</button>
-                <button class="btn btn-danger" onclick="executeRestart()">Confirm Reset</button>
             </div>
         </div>
     </div>
 
+    <!-- Toast -->
+    <div id="toast" class="fixed bottom-8 right-8 translate-y-20 opacity-0 transition-all duration-300 glass px-6 py-4 rounded-2xl flex items-center gap-3 z-50 border-white/10">
+        <i id="toast-icon" class="fas fa-check-circle"></i>
+        <span id="toast-msg"></span>
+    </div>
+
     <script>
-        const logs = document.getElementById('logs');
-        const statusPill = document.getElementById('system-status');
-        const globalPulse = document.getElementById('global-pulse');
-
-        function addLog(msg, type = 'info') {
-            const entry = document.createElement('div');
-            entry.className = `log-entry ${type}`;
-            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-            logs.prepend(entry);
-            if (logs.childNodes.length > 50) logs.lastChild.remove();
-        }
-
-        async function refreshStatus() {
+        // --- Status & Hardware Polling ---
+        async function updateSystemState() {
             try {
-                const res = await fetch('/health');
+                const res = await fetch('/api/status');
+                if (!res.ok) throw new Error('Offline');
                 const data = await res.json();
-
-                // Global Status
-                statusPill.textContent = `SYSTEM: ${data.status.toUpperCase()}`;
-                statusPill.className = `status-pill ${data.status === 'healthy' ? 'healthy' : 'degraded'}`;
-
-                if (data.status === 'healthy') {
-                    globalPulse.style.backgroundColor = 'var(--accent-green)';
-                    globalPulse.style.boxShadow = '0 0 10px var(--accent-green)';
-                } else {
-                    globalPulse.style.backgroundColor = 'var(--accent-amber)';
-                    globalPulse.style.boxShadow = '0 0 10px var(--accent-amber)';
+                
+                // Update Service Icons
+                updateStatusUI('status-api', data.api);
+                updateStatusUI('status-ollama', data.ollama);
+                updateStatusUI('status-qdrant', data.qdrant);
+                
+                // Update Model Info
+                document.getElementById('active-model').innerText = data.model || 'Unknown';
+                
+                // Update Hardware
+                if (data.hardware) {
+                    updateResource('cpu', data.hardware.cpu);
+                    updateResource('gpu', data.hardware.gpu);
+                    updateResource('ram', data.hardware.ram);
+                    updateResource('hdd', data.hardware.hdd);
                 }
-
-                // Ollama
-                const ollamaStatus = data.services.ollama;
-                document.getElementById('status-ollama').className = `indicator ${ollamaStatus === 'online' ? 'online' : 'offline'}`;
-                document.getElementById('val-ollama').textContent = ollamaStatus.toUpperCase();
-
-                // Qdrant
-                const qdrantStatus = data.services.qdrant;
-                document.getElementById('status-qdrant').className = `indicator ${qdrantStatus === 'online' ? 'online' : 'offline'}`;
-                document.getElementById('val-qdrant').textContent = qdrantStatus.toUpperCase();
-
-                addLog(`Health check completed: ${data.status}`, data.status === 'healthy' ? 'info' : 'error');
-
             } catch (e) {
-                addLog(`Connection error: ${e.message}`, 'error');
-                statusPill.textContent = 'SYSTEM: DISCONNECTED';
-                statusPill.className = 'status-pill critical';
+                ['status-api', 'status-ollama', 'status-qdrant'].forEach(id => updateStatusUI(id, 'offline'));
+                document.getElementById('active-model').innerText = 'Connection Lost';
             }
         }
 
-        function showConfirm() {
-            document.getElementById('confirm-overlay').style.display = 'flex';
+        function updateStatusUI(id, status) {
+            const el = document.getElementById(id);
+            const isOnline = status === 'online';
+            el.innerHTML = `<span class="status-dot ${isOnline ? 'online' : 'offline'}"></span> ${status.toUpperCase()}`;
+            el.className = `flex items-center text-xs font-semibold uppercase tracking-wider ${isOnline ? 'text-emerald-400' : 'text-red-400'}`;
         }
 
-        function hideConfirm() {
-            document.getElementById('confirm-overlay').style.display = 'none';
+        function updateResource(key, value) {
+            const bar = document.getElementById(`${key}-bar`);
+            const valText = document.getElementById(`${key}-val`);
+            if (bar && valText) {
+                bar.style.width = `${value}%`;
+                valText.innerText = `${Math.round(value)}%`;
+                // Color shift for high usage
+                if (value > 90) bar.className = 'progress-value bg-red-500';
+                else if (value > 70) bar.className = 'progress-value bg-orange-500';
+                else bar.className = `progress-value ${bar.classList.contains('bg-blue-500') ? 'bg-blue-500' : bar.classList.contains('bg-emerald-500') ? 'bg-emerald-500' : bar.classList.contains('bg-purple-500') ? 'bg-purple-500' : 'bg-orange-500'}`;
+            }
         }
 
-        async function executeRestart() {
-            hideConfirm();
-            addLog('Triggering system restart...', 'error');
+        setInterval(updateSystemState, 3000);
+        updateSystemState();
+
+        // --- WebSocket Interaction ---
+        let ws;
+        function connectWS() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/flow`);
+            
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    addFlowItem(msg);
+                } catch(e) {}
+            };
+
+            ws.onclose = () => setTimeout(connectWS, 2000);
+            ws.onerror = () => ws.close();
+        }
+
+        function addFlowItem(msg) {
+            const container = document.getElementById('flow-container');
+            const indicator = document.getElementById('live-indicator');
+            
+            if (container.querySelector('i.fa-satellite-dish')) container.innerHTML = '';
+
+            let html = '';
+            const timestamp = new Date().toLocaleTimeString();
+
+            switch(msg.stage) {
+                case 'ingest_start':
+                    indicator.classList.remove('hidden');
+                    indicator.innerHTML = '<i class="fas fa-database fa-spin"></i> UPDATING DB';
+                    html = `<div class="bg-blue-600/20 border-l-4 border-blue-400 p-4 rounded-r-xl">
+                        <div class="text-blue-400 font-bold text-xs uppercase mb-2">System Event: Data Update Started</div>
+                        <div class="text-white">Scanning Database folders... found ${msg.total_files} files to process.</div>
+                    </div>`;
+                    break;
+                case 'ingest_parsing':
+                    html = `<div class="text-slate-400 text-xs py-1 pl-6 border-l-2 border-slate-700 ml-5">
+                        <i class="fas fa-file-pdf animate-pulse"></i> Parsing documents: ${msg.current}/${msg.total}
+                    </div>`;
+                    break;
+                case 'ingest_embedding':
+                    html = `<div class="text-slate-400 text-xs py-1 pl-6 border-l-2 border-slate-700 ml-5">
+                        <i class="fas fa-microchip animate-spin"></i> Generating Embeddings & Indexing: ${msg.current}/${msg.total} chunks
+                    </div>`;
+                    break;
+                case 'ingest_complete':
+                    indicator.classList.add('hidden');
+                    indicator.innerHTML = '<i class="fas fa-spinner fa-spin"></i> PROCESSING';
+                    html = `<div class="bg-emerald-500/20 border-l-4 border-emerald-400 p-4 rounded-r-xl">
+                        <div class="text-emerald-400 font-bold text-xs uppercase mb-1">Update Complete</div>
+                        <div class="text-white">Successfully indexed ${msg.total_chunks} data chunks. Vector database is now up to date.</div>
+                    </div><div class="h-4"></div>`;
+                    showToast('Database Update Successful');
+                    break;
+                case 'query_received':
+                    indicator.classList.remove('hidden');
+                    html = `<div class="bg-blue-500/10 border-l-4 border-blue-500 p-5 rounded-r-2xl animate-in slide-in-from-left duration-300">
+                        <div class="flex justify-between items-start mb-3">
+                            <span class="text-blue-400 font-bold flex items-center gap-2">
+                                <i class="fas fa-comment-dots"></i> Incoming User Query
+                            </span>
+                            <span class="text-[10px] text-slate-500 font-mono">${timestamp}</span>
+                        </div>
+                        <div class="text-white text-lg font-semibold mb-2">${msg.text}</div>
+                        <div class="text-[10px] text-slate-500">USER_ID: ${msg.user}</div>
+                    </div>`;
+                    break;
+                case 'retrieval_start':
+                    html = `<div class="flex items-center gap-3 text-slate-400 py-2 border-l-2 border-slate-700 ml-5 pl-6">
+                        <i class="fas fa-database animate-pulse"></i> 
+                        <span>Querying vector space and hybrid brand indices...</span>
+                    </div>`;
+                    break;
+                case 'retrieval_end':
+                    html = `<div class="bg-emerald-500/5 border-l-4 border-emerald-500 p-4 ml-5 rounded-r-2xl">
+                        <div class="text-emerald-400 font-bold text-xs mb-3 flex items-center gap-2">
+                            <i class="fas fa-file-invoice"></i> Knowledge Synthesis: ${msg.files.length} sources identified
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            ${msg.files.map(f => `<div class="text-[11px] text-slate-300 bg-emerald-500/10 px-2 py-1 rounded truncate border border-emerald-500/10">${f}</div>`).join('')}
+                        </div>
+                    </div>`;
+                    break;
+                case 'llm_start':
+                    html = `<div class="flex items-center gap-3 text-slate-400 py-2 border-l-2 border-slate-700 ml-5 pl-6">
+                        <i class="fas fa-microchip animate-spin text-purple-500"></i> 
+                        <span>Large Language Model performing contextual inference...</span>
+                    </div>`;
+                    break;
+                case 'llm_end':
+                    indicator.classList.add('hidden');
+                    html = `<div class="bg-slate-100/5 border-l-4 border-white/20 p-5 ml-5 rounded-r-2xl border-white/10">
+                        <div class="text-slate-300 font-bold text-xs mb-3 uppercase tracking-widest">Autonomous Response Payload</div>
+                        <div class="text-slate-100 leading-relaxed whitespace-pre-wrap">${msg.answer}</div>
+                    </div><div class="h-8"></div>`;
+                    break;
+                case 'system':
+                    html = `<div class="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl text-red-400 text-center flex items-center justify-center gap-3">
+                        <i class="fas fa-triangle-exclamation"></i> ${msg.message}
+                    </div>`;
+                    break;
+            }
+
+            const div = document.createElement('div');
+            div.innerHTML = html;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        connectWS();
+
+        // --- Controls ---
+        async function triggerIngest() {
+            if (!confirm('ต้องการเริ่มทำการ Ingest ข้อมูลใหม่ลง Database ทันทีหรือไม่?')) return;
             try {
-                const res = await fetch('/system/restart', { method: 'POST' });
+                const res = await fetch('/api/ingest', { method: 'POST' });
                 const data = await res.json();
-                addLog(`Restart command sent: ${data.detail}`, 'info');
+                showToast('Ingestion Task Started');
             } catch (e) {
-                addLog(`Restart failed: ${e.message}`, 'error');
+                showToast('Error starting ingestion', true);
             }
-            setTimeout(refreshStatus, 2000);
         }
 
-        // Initial load and polling
-        refreshStatus();
-        setInterval(refreshStatus, 10000);
+        async function restartSystem() {
+            if (!confirm('ยืนยันการ Restart ระบบ KM RAG?')) return;
+            try {
+                const res = await fetch('/api/restart', { method: 'POST' });
+                const data = await res.json();
+                showToast(data.status === 'restarting' ? 'System Reboot Initiated' : 'Restart Failed', data.status !== 'restarting');
+            } catch (e) {
+                showToast('Network Error during restart', true);
+            }
+        }
+
+        function showToast(text, isError = false) {
+            const toast = document.getElementById('toast');
+            const msg = document.getElementById('toast-msg');
+            const icon = document.getElementById('toast-icon');
+            
+            msg.innerText = text;
+            toast.className = `fixed bottom-8 right-8 translate-y-0 opacity-100 transition-all duration-300 glass px-6 py-4 rounded-2xl flex items-center gap-3 z-50 border border-${isError ? 'red' : 'emerald'}-500/30`;
+            icon.className = `fas ${isError ? 'fa-circle-xmark text-red-500' : 'fa-check-circle text-emerald-500'}`;
+            
+            setTimeout(() => {
+                toast.classList.add('translate-y-20');
+                toast.classList.add('opacity-0');
+            }, 5000);
+        }
     </script>
 </body>
 </html>
