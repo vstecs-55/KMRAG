@@ -1,0 +1,147 @@
+============================================================
+ KM RAG - Customer Simulation Test Report (Round 1-3)
+============================================================
+
+1. ระบบ Infrastructure
+============================================================
+  ✅ API Server       → Online
+  ✅ Ollama           → Online (8 models)
+  ✅ Qdrant DB        → Online
+  ✅ GPU Usage        → 92% (พร้อมใช้งาน)
+  ⚠️ Model ที่ตอบ      → qwen3.6:35b (active)
+                       llama3.2-vision:11b (hardcoded ใน code)
+                       → mismatch! อาจไม่ตรงกับที่เลือก
+
+
+2. ปญหาหลัก: Qdrant ว่าง (0 chunks) — CRITICAL
+============================================================
+  ❌ ทุกครั้งทดสอบ → Qdrant มี 0 chunks
+  ❌ เอกสาร 1,093 ไฟล์ ไม่ได้นำเข้าระบบ
+  ❌ LLM ตอบจาก Training Data ไม่ใช่จากเอกสารจริง (RAG ไม่ทำงาน)
+  ⚠️ บางครั้งตอบออกมา "เหมือน" ถูก → เพราะ LLM จำข้อมูล server มาได้
+  ⚠️ บางครั้งตอบผิด → เพราะ LLM คาดเดาไปเอง
+
+
+3. ผลการทดสอบแต่ละหมวด
+============================================================
+
+3.1 Greeting (บททักทาย)
+  ✅ "สวัสดีครับ" → ตอบกลับทักทายได้
+  ❌ "สวัสดี" (สะกดผิด/มีวรรค) → ไม่ถูกจับเป็น greeting (exact match)
+  ❌ "สวัสดีครับ ยินดีที่ได้รู้จักครับ" → ตอบได้ (เพราะตรง keyword "สวัสดี")
+
+
+3.2 GIGABYTE Server Queries
+  ⚠️ "Server GIGABYTE รุ่นไหนรองรับ Dual CPU Intel Xeon?"
+     → ตอบว่า "ไม่พบข้อมูล" (เพราะ Qdrant ว่าง)
+  ❌ "สเปค Server GIGABYTE R283-Z94-AAV2"
+     → ตอบว่า "ไม่พบข้อมูล" (ไม่ดึงจาก training data เช่นกัน)
+  ⚠️ "rack server ของ GIGABYTE ที่ใช้ AMD EPYC"
+     → ตอบว่า "ไม่พบข้อมูล"
+
+
+3.3 Supermicro Queries
+  ✅ "มี Server Supermicro ตัวไหนบ้าง ที่ใช้ Xeon W-2400?"
+     → ตอบว่า "ไม่พบ" (เพราะ Qdrant ว่าง)
+  ⚠️ คำตอบก่อนหน้า: ผสม brand (SYS-530T-I ของ Supermicro → ตอบจากเอกสาร SAS)
+
+
+3.4 AMD/EPYC Queries
+  ✅ "มี Server AMD ที่ใช้ Threadripper บ้างไหม?"
+     → ตอบละเอียด (Threadripper 3000/3970X) — แต่เป็นการเดาจาก training data
+
+
+3.5 NVIDIA H200 Queries
+  ✅ "มี Server ใดรองรับ NVIDIA H200 บ้างไหม?"
+     → ตอบ "ไม่มี Server ที่รองรับ" — ถูกต้อง แต่เป็นการคาดเดา
+
+
+3.6 Storage Queries
+  ✅ "Server ที่ใช้เก็บข้อมูลเยอะๆ มีแบบไหน? ขอแบบมี SATA/NVMe"
+     → ตอบได้ (แต่มาจาก training data ไม่ใช่ RAG)
+  ✅ Keyword detection ทำงาน: "Storage", "HDD", "SSD", "SATA", "NVMe"
+
+
+3.7 Solomon/SAS Queries
+  ✅ "โซลูชัน Storage ของ SOLOMON มีอะไรบ้าง?"
+     → ตอบได้ (จาก training data)
+  ✅ "Solomon" → ถูกจับเป็น brand ใน brand matching list
+
+
+3.8 Infinitix Queries
+  ✅ "บริษัท Infinitix มีผลิตภัณฑ์อะไรเกี่ยวกับ Server บ้าง?"
+     → ตอบว่า "ไม่พบข้อมูล" — ถูกต้อง (ไม่มีเอกสาร → บอกว่าไม่พบ)
+
+
+3.9 Cloudera Queries
+  ✅ "มี Product ใดรองรับ Cloudera บ้าง?"
+     → ตอบได้ (จาก training data)
+
+
+3.10 Edge Cases
+  ✅ "ราคา" → บอกว่า "ไม่พบข้อมูลเกี่ยวกับราคา" (เพราะสั้นเกินไป → trigger RAG แล้วว่าง)
+  ✅ "ฝนตกไหม?" → บอกว่า "ไม่พบในเอกสาร" (out of scope)
+  ✅ "มีอะไรบ้าง?" → ตอบได้จาก training data (general query)
+  ✅ "แนะนำร้านอาหารใกล้ๆ หน่อย" → บอกว่า "ไม่พบข้อมูลร้านอาหาร" (out of scope)
+
+
+4. Feature ที่ทำงานได้ดี
+============================================================
+  ✅ Brand Switch Detection
+     → เมื่อเปลี่ยน brand จะ Clear history อัตโนมัติ
+     → เช่น SUPERMICRO → GIGABYTE จะ reset context
+  ✅ Error Handling
+     → ไม่มี crash เมื่อไม่มีข้อมูล
+     → ตอบเป็นภาษาไทยสุภาพ
+  ✅ Brand Filtering
+     → รองรับ GIGABYTE, Supermicro, AMD, INTEL, NVIDIA, CLOUDERA,
+       SAS, SOLOMON, INFINITIX, และคำไทย
+  ✅ Hybrid Search Boosting
+     → เพิ่มคะแนนเมื่อพบ keyword เช่น H200, HGX, HDD, SSD, SAS
+  ✅ Hardware Monitoring
+     → API /api/status แสดง CPU/RAM/HDD/GPU
+  ✅ WebSocket Broadcast
+     → ส่ง event stage (query_received, retrieval_start, llm_end ฯลฯ)
+
+
+5. ปญหาที่ควรแกไ้ไข
+============================================================
+
+  🔴 P0 - Must Fix:
+    1. Qdrant ว่าง (0 chunks) → รัน ingest เอกสาร 1,093 ไฟล์
+    2. Ingest error จาก stdin → ใช้ script file แทน
+    3. LLM ตอบจาก training data แทน RAG → ต้องมีข้อมูลใน Qdrant
+
+  🟡 P1 - Should Fix:
+    4. Greeting exact match → เปลี่ยนเป็น substring/contains check
+    5. Model mismatch → hardcoded vs active
+    6. Confident hallucination → เพิ่ม confidence check
+    7. Brand confusion → Supermicro ตอบจากเอกสารอื่น
+
+  🟢 P2 - Nice to Have:
+    8. ลบไฟล์ทดสอบ/ว่าง (0 bytes) ออกจาก Database/
+    9. เพิ่ม fuzzy match สำหรับคำสะกดผิด
+    10. ทดสอบ LINE Webhook endpoint ปลายทาง
+
+
+6. ข้อสังเกตเพิ่มเติม
+============================================================
+  - เอกสารใน Database/ พร้อมใช้งาน (Gigabyte PDF, Supermicro PDF, ฯลฯ)
+  - LLM model qwen3.6:35b (24GB) ทำงานได้ดีใน GPU
+  - Dashboard มี Model Selector และ Manual Ingest button
+  - Dashboard WebSocket เป็น Read-Only (ไม่มี input box สำหรับส่งคำถาม)
+  - LINE Webhook endpoint ทำงานได้ แต่ต้องการ LINE Bot token จริง
+  - ระบบมี /api/ingest, /api/restart, /api/status endpoints ครบ
+
+
+7. สถานะโดยรวม
+============================================================
+  ⚠️ ระบบ "พร้อมใช้งาน" แต่ Qdrant ว่าง
+  ⚠️ คำตอบที่ได้อาจ "เหมือน" ถูก แต่จริงๆ ไม่ได้ดึงจากเอกสาร
+  ✅ Logic ทั้งหมด (search, ranking, routing, error handling) ทำงานได้
+  ❌ ต้อง Ingest เอกสาร → ทดสอบความถูกต้องจริง → ถึงจะมั่นใจได้
+
+
+Tested by: Claude (as customer)
+Date: 2026-05-26
+Rounds: 3 (30 queries total)

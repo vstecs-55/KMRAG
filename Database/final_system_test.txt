@@ -1,1 +1,0 @@
-This is a critical test for the hybrid RAG system indexing. It should be found by both semantic and keyword search.

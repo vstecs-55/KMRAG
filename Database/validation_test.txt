@@ -1,1 +1,0 @@
-This is a validation test file for KM RAG. The magic keyword is: VAL-2026-X.
