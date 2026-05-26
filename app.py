@@ -87,27 +87,47 @@ async def hybrid_search(query_text: str):
     await manager.broadcast({"stage": "retrieval_start", "query": search_query})
     vector = get_embedding(search_query)
     
-    # Advanced Brand Filter
-    conditions = []
+    # Define brands and their identifiers
+    brands = {
+        "GIGABYTE": ["GIGABYTE", "GIGABYUT", "GIGA", "จิกะไบต์"],
+        "SUPERMICRO": ["SUPERMICRO", "SUPER", "ซุปเปอร์ไมโคร"],
+        "AMD": ["AMD", "EPYC", "RYZEN", "THREADRIPPER", "เอเอ็มดี"],
+        "INTEL": ["INTEL", "XEON", "อินเทล"],
+        "CLOUDERA": ["CLOUDERA", "คลาวเดอร่า"],
+        "NVIDIA": ["NVIDIA", "เอนวีเดีย"],
+        "INFINITIX": ["INFINITIX", "อินฟินิทิกซ์"],
+        "SOLOMON": ["SOLOMON", "โซโลมอน"],
+        "SAS": ["SAS", "แซส", "เอสเอเอส", "สาส"]
+    }
+    
+    matched_brand = None
     search_filter = None
+    brand_conditions = []
     
-    if any(x in query_upper for x in ["GIGABYTE", "GIGABYUT", "GIGA", "จิกะไบต์"]):
-        conditions.append({"key": "filename", "match": {"text": "GIGABYTE"}})
-    elif any(x in query_upper for x in ["SUPERMICRO", "SUPER", "ซุปเปอร์ไมโคร"]):
-        search_filter = {
-            "should": [
-                {"key": "filename", "match": {"text": "Supermicro"}},
-                {"key": "filename", "match": {"text": "sys-"}},
-                {"key": "filename", "match": {"text": "as-"}}
-            ]
-        }
-    elif any(x in query_upper for x in ["AMD", "EPYC", "RYZEN", "THREADRIPPER", "เอเอ็มดี"]):
-        conditions.append({"key": "filename", "match": {"text": "AMD"}})
-    elif any(x in query_upper for x in ["INTEL", "XEON", "อินเทล"]):
-        conditions.append({"key": "filename", "match": {"text": "Intel"}})
+    for brand, keywords in brands.items():
+        if any(kw in query_upper for kw in keywords):
+            matched_brand = brand
+            if brand == "SUPERMICRO":
+                brand_conditions.append({
+                    "should": [
+                        {"key": "filename", "match": {"text": "Supermicro"}},
+                        {"key": "filename", "match": {"text": "sys-"}},
+                        {"key": "filename", "match": {"text": "as-"}}
+                    ]
+                })
+            else:
+                # Case-insensitive brand matching in filename
+                brand_conditions.append({
+                    "should": [
+                        {"key": "filename", "match": {"text": brand.upper()}},
+                        {"key": "filename", "match": {"text": brand.lower()}},
+                        {"key": "filename", "match": {"text": brand.capitalize()}}
+                    ]
+                })
+            break 
     
-    if not search_filter and conditions:
-        search_filter = {"must": conditions}
+    if brand_conditions:
+        search_filter = {"must": brand_conditions}
 
     payload = {
         "vector": vector,
@@ -129,11 +149,16 @@ async def hybrid_search(query_text: str):
         if "H200" in text: score += 1000
         if "HGX" in text: score += 2000
         if "8 X" in text or "8X" in text or "8 GPU" in text: score += 1500
-        if "BAYS" in text or "SATA" in text or "NVME" in text: score += 800 # Boost for storage queries
+        if "BAYS" in text or "SATA" in text or "NVME" in text: score += 800 
         if "G593" in fname or "G593" in text: score += 2000
         if "G493" in fname or "G493" in text: score += 1200
         if "EPYC" in text or "9004" in text or "9005" in text: score += 1000
         if "XEON" in text or "W-3400" in text or "W-2400" in text: score += 1000
+        if "CLOUDERA" in text or "CLOUDERA" in fname: score += 1500
+        if "SAS" in text or "SAS" in fname: score += 1500
+        if "SOLOMON" in text or "SOLOMON" in fname: score += 1500
+        if "INFINITIX" in text or "INFINITIX" in fname: score += 1500
+        if "NVIDIA" in text or "NVIDIA" in fname: score += 1500
         return score
 
     points.sort(key=score_chunk, reverse=True)
@@ -160,7 +185,7 @@ async def hybrid_search(query_text: str):
         "files": list(seen_files)
     })
     
-    return diverse_points[:12]
+    return diverse_points[:12], matched_brand
 
 async def call_llm(system_prompt: str, user_content: str, history: List[Dict[str, str]] = None):
     messages = [{"role": "system", "content": system_prompt}]
@@ -184,34 +209,83 @@ async def call_llm(system_prompt: str, user_content: str, history: List[Dict[str
         raise e
 
 async def process_query(user_id: str, query_text: str):
-    logger.info(f"Processing: {query_text}")
+    logger.info(f"Processing: {query_text} (User: {user_id})")
     await manager.broadcast({"stage": "query_received", "text": query_text, "user": user_id})
     
+    # Save user query immediately
+    save_history(user_id, "user", query_text)
+    
+    # --- INTENT ROUTING (Greeting / Small Talk) ---
+    greetings = ["สวัสดี", "hello", "hi", "หวัดดี", "สอบถาม", "ถามหน่อย", "กูรู", "expert"]
+    query_lower = query_text.lower().strip()
+    
+    # If it's just a greeting or very short, don't use RAG
+    if any(g == query_lower for g in greetings) or (len(query_lower) < 15 and any(g in query_lower for g in greetings)):
+        greeting_response = "สวัสดีครับ! ผมคือผู้เชี่ยวชาญด้านเทคนิค Server และ Software Solutions ยินดีให้ข้อมูลเกี่ยวกับผลิตภัณฑ์ GIGABYTE, Supermicro, AMD, Intel, NVIDIA, Cloudera, SAS, Infinitix และ Solomon ครับ วันนี้ต้องการสอบถามเรื่องอะไรดีครับ?"
+        await manager.broadcast({"stage": "llm_end", "answer": greeting_response})
+        save_history(user_id, "assistant", greeting_response)
+        return greeting_response
+
     # Get history for this specific user
     history = get_history(user_id)
     
-    context_docs = await hybrid_search(query_text)
-    context_text = "\n".join([f"Source File: {d.get('payload',{}).get('filename')}\n{d.get('payload',{}).get('text')}" for d in context_docs])
-    
-    system_prompt = """คุณคือผู้เชี่ยวชาญด้านเทคนิค Server และชิปประมวลผล
-    ภารกิจ: ค้นหาและระบุข้อมูลทางเทคนิค (CPU, GPU, Storage, HDD, RAM, PCIe, Memory Channels) จากข้อมูลที่ให้มาเท่านั้น
-    - ระบุรุ่น (Model), จำนวนคอร์ (Cores), ความเร็ว (Clock Speed), และเทคโนโลยีเด่น
-    - สังเกตข้อมูลจำนวน HDD/SSD ในส่วน 'Drive Bays' หรือ 'Storage'
-    - ตอบให้ชัดเจน ระบุตัวเลขและหน่วยที่ถูกต้องตามเอกสาร
-    - หากไม่พบข้อมูลในบริบท ให้แจ้งว่าไม่พบข้อมูล แต่พยายามสรุปข้อมูลที่มีประโยชน์ที่สุดจากไฟล์ที่ดึงมา"""
-    
-    user_content = f"CONTEXT DATA:\n{context_text}\n\nUSER QUESTION: {query_text}"
-    
-    await manager.broadcast({"stage": "llm_start"})
-    final_answer = await call_llm(system_prompt, user_content, history=history)
-    await manager.broadcast({"stage": "llm_end", "answer": final_answer})
-    
-    save_history(user_id, "user", query_text)
-    save_history(user_id, "assistant", final_answer)
-    return final_answer
+    try:
+        context_docs, matched_brand = await hybrid_search(query_text)
+        context_text = "\n".join([f"Source File: {d.get('payload',{}).get('filename')}\n{d.get('payload',{}).get('text')}" for d in context_docs])
+        
+        # Check for brand switch in history to force clear
+        history_to_send = [h for h in history if h["role"] != "user" or h["content"] != query_text]
+        if matched_brand:
+            last_assistant_msg = next((m["content"].upper() for m in reversed(history_to_send) if m["role"] == "assistant"), "")
+            if last_assistant_msg and matched_brand not in last_assistant_msg:
+                logger.info(f"Brand switch detected: {matched_brand}. Clearing history for this turn.")
+                history_to_send = []
+
+        system_prompt = """คุณคือที่ปรึกษาด้านเทคนิค Server และ Software Solutions ผู้เชี่ยวชาญ
+        ภารกิจ: ตอบคำถามโดยใช้ข้อมูลจาก "CONTEXT DATA" ที่ให้มาเท่านั้น
+        - **สำคัญ**: หากข้อมูลใน CONTEXT DATA มีความกระจัดกระจายหรือเป็นข้อความสั้นๆ ให้พยายามสรุปใจความสำคัญที่เกี่ยวข้องกับคำถามที่สุด
+        - ตอบคำถามปัจจุบันโดยตรงในประโยคแรก
+        - ห้ามนำข้อมูลจากแบรนด์อื่นที่เคยคุยก่อนหน้ามาตอบเด็ดขาด ให้ยึดตามเอกสารที่ดึงมา (CONTEXT DATA) ล่าสุดเท่านั้น
+        - หากไม่พบข้อมูลที่ระบุใน CONTEXT DATA จริงๆ ให้แจ้งว่าไม่พบข้อมูลในเอกสาร
+        - ใช้ภาษาไทยที่กระชับ เป็นทางการ และตรงประเด็น"""
+        
+        user_content = f"--- IMPORTANT: NEW TOPIC ({matched_brand or 'General'}) ---\nCONTEXT DATA:\n{context_text}\n\nUSER QUESTION: {query_text}"
+        
+        await manager.broadcast({"stage": "llm_start"})
+        final_answer = await call_llm(system_prompt, user_content, history=history_to_send)
+        await manager.broadcast({"stage": "llm_end", "answer": final_answer})
+        
+        save_history(user_id, "assistant", final_answer)
+        return final_answer
+    except Exception as e:
+        error_msg = f"ขออภัยครับ เกิดข้อผิดพลาดในการประมวลผล: {str(e)}"
+        logger.error(f"Error processing query: {e}")
+        save_history(user_id, "assistant", error_msg)
+        return error_msg
 
 
 # --- API Endpoints ---
+
+class ModelUpdate(BaseModel):
+    model: str
+
+@app.get("/api/models")
+async def list_models():
+    try:
+        res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        res.raise_for_status()
+        models = res.json().get("models", [])
+        return {"models": [m["name"] for m in models]}
+    except Exception as e:
+        logger.error(f"Failed to fetch models: {e}")
+        return {"models": [MODEL_GEN]}
+
+@app.post("/api/model")
+async def update_model(data: ModelUpdate):
+    global MODEL_GEN
+    MODEL_GEN = data.model
+    logger.info(f"Active model updated to: {MODEL_GEN}")
+    return {"status": "success", "model": MODEL_GEN}
 
 @app.websocket("/ws/flow")
 async def websocket_endpoint(websocket: WebSocket):

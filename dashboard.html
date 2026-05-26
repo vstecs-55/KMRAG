@@ -47,7 +47,9 @@
             <div class="flex items-center gap-6 glass px-6 py-3 rounded-2xl">
                 <div class="text-right hidden sm:block">
                     <p class="text-xs text-slate-500 uppercase font-semibold">Active Model</p>
-                    <p id="active-model" class="text-blue-400 font-mono text-sm">Loading...</p>
+                    <select id="model-select" onchange="changeModel(this.value)" class="bg-transparent text-blue-400 font-mono text-sm border-none focus:ring-0 cursor-pointer outline-none text-right">
+                        <option value="" class="bg-slate-900">Loading...</option>
+                    </select>
                 </div>
                 <div class="h-8 w-[1px] bg-slate-700 hidden sm:block"></div>
                 <button onclick="triggerIngest()" class="bg-blue-500/10 hover:bg-blue-500 text-blue-500 hover:text-white px-4 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 border border-blue-500/20">
@@ -173,6 +175,41 @@
 
     <script>
         // --- Status & Hardware Polling ---
+        let modelsLoaded = false;
+        let isChangingModel = false;
+
+        async function fetchModels() {
+            try {
+                const res = await fetch('/api/models');
+                const data = await res.json();
+                const select = document.getElementById('model-select');
+                const currentVal = select.value;
+                select.innerHTML = data.models.map(m => `<option value="${m}" class="bg-slate-900">${m}</option>`).join('');
+                if (currentVal) select.value = currentVal;
+                modelsLoaded = true;
+            } catch (e) {
+                console.error('Failed to fetch models', e);
+            }
+        }
+
+        async function changeModel(model) {
+            isChangingModel = true;
+            try {
+                const res = await fetch('/api/model', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model })
+                });
+                const data = await res.json();
+                showToast(`Model changed to ${data.model}`);
+                // Keep the flag for a bit to let status poll catch up
+                setTimeout(() => { isChangingModel = false; }, 5000);
+            } catch (e) {
+                showToast('Failed to change model', true);
+                isChangingModel = false;
+            }
+        }
+
         async function updateSystemState() {
             try {
                 const res = await fetch('/api/status');
@@ -184,8 +221,13 @@
                 updateStatusUI('status-ollama', data.ollama);
                 updateStatusUI('status-qdrant', data.qdrant);
                 
-                // Update Model Info
-                document.getElementById('active-model').innerText = data.model || 'Unknown';
+                // Update Model Info (only if not currently changing it)
+                if (modelsLoaded && !isChangingModel) {
+                    const select = document.getElementById('model-select');
+                    if (select.value !== data.model) {
+                        select.value = data.model;
+                    }
+                }
                 
                 // Update Hardware
                 if (data.hardware) {
@@ -196,7 +238,9 @@
                 }
             } catch (e) {
                 ['status-api', 'status-ollama', 'status-qdrant'].forEach(id => updateStatusUI(id, 'offline'));
-                document.getElementById('active-model').innerText = 'Connection Lost';
+                if (!isChangingModel && document.getElementById('model-select')) {
+                    // document.getElementById('model-select').innerHTML = '<option value="">Connection Lost</option>';
+                }
             }
         }
 
@@ -222,6 +266,7 @@
 
         setInterval(updateSystemState, 3000);
         updateSystemState();
+        fetchModels();
 
         // --- WebSocket Interaction ---
         let ws;

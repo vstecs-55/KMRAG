@@ -2,7 +2,7 @@ import os
 import sys
 import argparse
 import pandas as pd
-import pdfplumber
+import pypdfium2 as pdfium
 from docx import Document
 from typing import List, Optional
 
@@ -43,7 +43,7 @@ def parse_text(file_path: str) -> str:
     except Exception as e:
         raise ParserError(f"Error parsing text file {file_path}: {str(e)}")
 
-def semantic_chunking(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
+def semantic_chunking(text: str, chunk_size: int = 2500, overlap: int = 400) -> List[str]:
     """
     Splits text into chunks based on logical sections (double newlines)
     and maintains a context window (overlap). Strictly respects chunk_size.
@@ -106,22 +106,23 @@ def semantic_chunking(text: str, chunk_size: int = 1000, overlap: int = 200) -> 
 
 def parse_pdf(file_path: str) -> str:
     """
-    Reads a PDF file and applies semantic chunking.
+    Reads a PDF file using pypdfium2 and applies semantic chunking.
     """
     try:
         text = ""
-        with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n\n"
-
+        pdf = pdfium.PdfDocument(file_path)
+        for i in range(len(pdf)):
+            page = pdf.get_page(i)
+            textpage = page.get_textpage()
+            page_text = textpage.get_text_range()
+            if page_text:
+                text += page_text + "\n\n"
+        
         chunks = semantic_chunking(text)
         return "\n\n---CHUNK---\n\n".join(chunks)
     except (FileNotFoundError, PermissionError) as e:
         raise ParserError(f"File error parsing PDF file {file_path}: {str(e)}")
     except Exception as e:
-        # pdfplumber can raise various internal errors, wrapping them in ParserError
         raise ParserError(f"Error parsing PDF file {file_path}: {str(e)}")
 
 def parse_word(file_path: str) -> str:

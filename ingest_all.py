@@ -15,7 +15,11 @@ MODEL_EMBED = "mxbai-embed-large"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Ingestor")
 
+def clean_text(text):
+    return "".join(c for c in text if c.isprintable() or c in "\n\t ")
+
 def get_embedding(text):
+    text = clean_text(text)
     for attempt in range(5):
         try:
             res = requests.post(f"{OLLAMA_URL}/api/embeddings", json={"model": MODEL_EMBED, "prompt": text}, timeout=90)
@@ -24,7 +28,7 @@ def get_embedding(text):
         except Exception as e:
             logger.warning(f"Embedding attempt {attempt+1} failed: {e}")
             time.sleep(3)
-    raise Exception("Failed to get embedding after 5 attempts")
+    return None
 
 def ingest_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
@@ -45,30 +49,16 @@ def ingest_file(file_path):
         else:
             return
             
-        # Large chunks (3500 chars) to ensure model + specs are together
-        chunk_size = 3500
-        overlap = 500
-        
-        chunks = []
-        if len(content) <= chunk_size:
-            chunks = [content]
-        else:
-            start = 0
-            while start < len(content):
-                end = start + chunk_size
-                chunks.append(content[start:end])
-                start += chunk_size - overlap
+        raw_chunks = content.split("\n\n---CHUNK---\n\n")
+        chunks = [c.strip() for c in raw_chunks if c.strip()]
                 
         points = []
         filename = os.path.basename(file_path)
         for i, chunk in enumerate(chunks):
-            if not chunk.strip(): continue
-            
-            # CRITICAL: Define rich_chunk properly before use
             text_to_embed = f"Source File: {filename}\nTechnical Data:\n{chunk}"
             
-            time.sleep(1.0) # Conservative delay for stability
             vector = get_embedding(text_to_embed)
+            if not vector: continue
             
             points.append({
                 "id": str(uuid.uuid4()),
@@ -81,10 +71,14 @@ def ingest_file(file_path):
                 }
             })
             
+            if len(points) >= 20:
+                res = requests.put(f"{QDRANT_URL}/collections/{COLLECTION_NAME}/points?wait=true", json={"points": points})
+                res.raise_for_status()
+                points = []
+            
         if points:
             res = requests.put(f"{QDRANT_URL}/collections/{COLLECTION_NAME}/points?wait=true", json={"points": points})
             res.raise_for_status()
-            logger.info(f"Successfully ingested {len(points)} chunks from {file_path}")
             
     except Exception as e:
         logger.error(f"Error ingesting {file_path}: {e}")
@@ -98,17 +92,17 @@ def main():
     res.raise_for_status()
     
     db_path = "Database"
-    target_folders = ["Gigabyte", "Supermicro", "AMD", "Intel"]
     
     files_to_ingest = []
     for root, dirs, files in os.walk(db_path):
-        # Check if the current path contains one of our target brands
-        if any(brand in root for brand in target_folders):
-            for file in files:
-                files_to_ingest.append(os.path.join(root, file))
+        # Skip hidden directories
+        if any(d.startswith('.') for d in root.split(os.sep)):
+            continue
+        for file in files:
+            if file.startswith('.'): continue
+            files_to_ingest.append(os.path.join(root, file))
                 
-    # Run Ingestion on filtered list
-    logger.info(f"Starting targeted ingestion for {len(files_to_ingest)} files...")
+    logger.info(f"Starting ingestion for {len(files_to_ingest)} files...")
     for path in files_to_ingest:
         ingest_file(path)
 

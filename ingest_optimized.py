@@ -62,13 +62,17 @@ def process_single_file(file_path):
 
 def run_ingestion(progress_callback=None):
     db_path = "Database"
-    target_folders = ["Gigabyte", "Supermicro", "AMD", "Intel"]
     
     files_to_ingest = []
     for root, dirs, files in os.walk(db_path):
-        if any(brand in root for brand in target_folders):
-            for file in files:
-                files_to_ingest.append(os.path.join(root, file))
+        # Skip hidden directories
+        if any(d.startswith('.') for d in root.split(os.sep)):
+            continue
+        for file in files:
+            # Skip hidden files
+            if file.startswith('.'):
+                continue
+            files_to_ingest.append(os.path.join(root, file))
                 
     logger.info(f"Found {len(files_to_ingest)} files for ingestion.")
     if progress_callback: progress_callback({"stage": "ingest_start", "total_files": len(files_to_ingest)})
@@ -119,7 +123,7 @@ def run_ingestion(progress_callback=None):
         return None
 
     # We use a ThreadPool for Ollama calls as they are I/O bound (waiting for GPU/Ollama)
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=1) as executor:
         chunk_futures = []
         for file_data in all_file_data:
             for i, chunk in enumerate(file_data["chunks"]):
@@ -131,6 +135,9 @@ def run_ingestion(progress_callback=None):
             point = future.result()
             if point:
                 points_batch.append(point)
+            
+            # Small delay for Ollama stability
+            time.sleep(0.05)
             
             ingested_chunks += 1
             if len(points_batch) >= batch_size:
