@@ -43,7 +43,7 @@ def parse_text(file_path: str) -> str:
     except Exception as e:
         raise ParserError(f"Error parsing text file {file_path}: {str(e)}")
 
-def semantic_chunking(text: str, chunk_size: int = 2500, overlap: int = 400) -> List[str]:
+def semantic_chunking(text: str, chunk_size: int = 700, overlap: int = 150) -> List[str]:
     """
     Splits text into chunks based on logical sections (double newlines)
     and maintains a context window (overlap). Strictly respects chunk_size.

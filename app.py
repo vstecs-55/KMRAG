@@ -6,6 +6,7 @@ import logging
 import subprocess
 import asyncio
 import json
+import re
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -17,7 +18,7 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 COLLECTION_NAME = "km_knowledge"
 DB_PATH = "chat_history.db"
 LINE_TOKEN = "hg2DPV5v0z7cyJyuJsBkEBk/j+wNoUnrSLPOTRHL4TzWrqChXDZ1u6VRkzUtRCmEpEnR47gSrNoTurwwWwKit/fffi6PPnNY8WF6HVK1vLFkb9jPu6B+Wv7oHnAwJw48XhwXJy0ymBAzSRhAGwbxPgdB04t89/1O/w1cDnyilFU="
-MODEL_GEN = "llama3.2-vision:11b"
+MODEL_GEN = "llama3.2-vision:11b" 
 MODEL_EMBED = "mxbai-embed-large"
 
 logging.basicConfig(level=logging.INFO)
@@ -58,7 +59,7 @@ manager = ConnectionManager()
 def get_history(user_id: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT role, content FROM history WHERE user_id = ? ORDER BY timestamp DESC LIMIT 3", (user_id,))
+    cursor.execute("SELECT role, content FROM history WHERE user_id = ? ORDER BY timestamp DESC LIMIT 5", (user_id,))
     rows = cursor.fetchall()
     conn.close()
     return [{"role": r[0], "content": r[1]} for r in reversed(rows)]
@@ -75,7 +76,26 @@ def get_embedding(text: str):
     res.raise_for_status()
     return res.json()["embedding"]
 
-async def hybrid_search(query_text: str):
+# --- Brand Configuration ---
+
+PRIMARY_BRANDS = {
+    "GIGABYTE": ["GIGABYTE", "GIGABYUT", "GIGA", "จิกะไบต์"],
+    "SUPERMICRO": ["SUPERMICRO", "SUPER", "ซุปเปอร์ไมโคร"],
+    "SAS": ["SAS", "แซส", "เอสเอเอส", "สาส"],
+    "SOLOMON": ["SOLOMON", "โซโลมอน"],
+    "CLOUDERA": ["CLOUDERA", "คลาวเดอร่า"],
+    "INFINITIX": ["INFINITIX", "อินฟินิทิกซ์"],
+    "NVIDIA": ["NVIDIA", "เอนวีเดีย"]
+}
+
+COMPONENT_BRANDS = {
+    "AMD": ["AMD", "EPYC", "RYZEN", "THREADRIPPER", "เอเอ็มดี"],
+    "INTEL": ["INTEL", "XEON", "อินเทล"]
+}
+
+ALL_BRAND_KEYWORDS = {**PRIMARY_BRANDS, **COMPONENT_BRANDS}
+
+async def hybrid_search(query_text: str, brand_override: str = None):
     search_query = query_text
     query_upper = query_text.upper()
     
@@ -87,105 +107,93 @@ async def hybrid_search(query_text: str):
     await manager.broadcast({"stage": "retrieval_start", "query": search_query})
     vector = get_embedding(search_query)
     
-    # Define brands and their identifiers
-    brands = {
-        "GIGABYTE": ["GIGABYTE", "GIGABYUT", "GIGA", "จิกะไบต์"],
-        "SUPERMICRO": ["SUPERMICRO", "SUPER", "ซุปเปอร์ไมโคร"],
-        "AMD": ["AMD", "EPYC", "RYZEN", "THREADRIPPER", "เอเอ็มดี"],
-        "INTEL": ["INTEL", "XEON", "อินเทล"],
-        "CLOUDERA": ["CLOUDERA", "คลาวเดอร่า"],
-        "NVIDIA": ["NVIDIA", "เอนวีเดีย"],
-        "INFINITIX": ["INFINITIX", "อินฟินิทิกซ์"],
-        "SOLOMON": ["SOLOMON", "โซโลมอน"],
-        "SAS": ["SAS", "แซส", "เอสเอเอส", "สาส"]
-    }
+    matched_primary_brand = brand_override if brand_override in PRIMARY_BRANDS else None
+    matched_component_brand = brand_override if brand_override in COMPONENT_BRANDS else None
     
-    matched_brand = None
-    search_filter = None
-    brand_conditions = []
+    if not matched_primary_brand:
+        for brand, keywords in PRIMARY_BRANDS.items():
+            if any(kw in query_upper for kw in keywords):
+                matched_primary_brand = brand
+                break
+                
+    if not matched_primary_brand:
+        if re.search(r'\b[A-Z]{1,2}[0-9]{2,3}(-[A-Z0-9]+)?\b', query_upper):
+            matched_primary_brand = "GIGABYTE"
+            
+    if not matched_component_brand:
+        for brand, keywords in COMPONENT_BRANDS.items():
+            if any(kw in query_upper for kw in keywords):
+                matched_component_brand = brand
+                break
     
-    for brand, keywords in brands.items():
-        if any(kw in query_upper for kw in keywords):
-            matched_brand = brand
-            if brand == "SUPERMICRO":
-                brand_conditions.append({
-                    "should": [
-                        {"key": "filename", "match": {"text": "Supermicro"}},
-                        {"key": "filename", "match": {"text": "sys-"}},
-                        {"key": "filename", "match": {"text": "as-"}}
-                    ]
-                })
+    def perform_qdrant_search(filter_brand=None):
+        search_filter = None
+        brand_conditions = []
+        if filter_brand:
+            if filter_brand == "SUPERMICRO":
+                brand_conditions.append({"should": [{"key": "filename", "match": {"text": "Supermicro"}}, {"key": "filename", "match": {"text": "sys-"}}, {"key": "filename", "match": {"text": "as-"}}]})
             else:
-                # Case-insensitive brand matching in filename
-                brand_conditions.append({
-                    "should": [
-                        {"key": "filename", "match": {"text": brand.upper()}},
-                        {"key": "filename", "match": {"text": brand.lower()}},
-                        {"key": "filename", "match": {"text": brand.capitalize()}}
-                    ]
-                })
-            break 
-    
-    if brand_conditions:
-        search_filter = {"must": brand_conditions}
+                brand_conditions.append({"should": [{"key": "filename", "match": {"text": filter_brand.upper()}}, {"key": "filename", "match": {"text": filter_brand.lower()}}, {"key": "filename", "match": {"text": filter_brand.capitalize()}}]})
+        
+        if brand_conditions:
+            search_filter = {"must": brand_conditions}
 
-    payload = {
-        "vector": vector,
-        "limit": 50,
-        "with_payload": True
-    }
-    if search_filter:
-        payload["filter"] = search_filter
+        payload = {"vector": vector, "limit": 70, "with_payload": True}
+        if search_filter: payload["filter"] = search_filter
+        
+        res = requests.post(f"{QDRANT_URL}/collections/{COLLECTION_NAME}/points/search", json=payload)
+        res.raise_for_status()
+        return res.json().get("result", [])
 
-    res = requests.post(f"{QDRANT_URL}/collections/{COLLECTION_NAME}/points/search", json=payload)
-    res.raise_for_status()
-    result = res.json().get("result", [])
-    points = result if isinstance(result, list) else []
+    # First attempt: with detected brand
+    points = perform_qdrant_search(matched_primary_brand)
     
+    # Fallback: if no results and a brand was used, try without brand filter
+    if not points and matched_primary_brand:
+        logger.info(f"Fallback search: 0 results with brand {matched_primary_brand}, retrying without filter.")
+        points = perform_qdrant_search(None)
+        matched_primary_brand = None # Reset brand if fallback triggered
+
+    # Score and Rank
     def score_chunk(p):
         text = p.get("payload", {}).get("text", "").upper()
         fname = p.get("payload", {}).get("filename", "").upper()
         score = 0
+        
+        model_match = re.search(r'[0-9]{3}-[A-Z0-9-]{3,}', text)
+        if model_match: score += 5000
+        
         if "H200" in text: score += 1000
         if "HGX" in text: score += 2000
         if "8 X" in text or "8X" in text or "8 GPU" in text: score += 1500
-        if "BAYS" in text or "SATA" in text or "NVME" in text: score += 800 
-        if "G593" in fname or "G593" in text: score += 2000
-        if "G493" in fname or "G493" in text: score += 1200
-        if "EPYC" in text or "9004" in text or "9005" in text: score += 1000
-        if "XEON" in text or "W-3400" in text or "W-2400" in text: score += 1000
-        if "CLOUDERA" in text or "CLOUDERA" in fname: score += 1500
-        if "SAS" in text or "SAS" in fname: score += 1500
-        if "SOLOMON" in text or "SOLOMON" in fname: score += 1500
-        if "INFINITIX" in text or "INFINITIX" in fname: score += 1500
-        if "NVIDIA" in text or "NVIDIA" in fname: score += 1500
+        if "BAYS" in text or "SATA" in text or "NVME" in text: score += 1200 
+        
+        if matched_primary_brand and matched_primary_brand in fname: score += 10000
+        if "GIGABYTE" in fname or "GIGABYTE" in text: score += 2000
+        if "SUPERMICRO" in fname or "SUPERMICRO" in text: score += 2000
+        
+        if matched_component_brand and matched_component_brand in text: score += 1500
+        
         return score
 
     points.sort(key=score_chunk, reverse=True)
     
-    # Diversification: Ensure we get chunks from different files
-    seen_files = set()
+    file_chunk_counts = {}
     diverse_points = []
     for p in points:
         fname = p.get("payload", {}).get("filename")
-        if fname not in seen_files:
+        count = file_chunk_counts.get(fname, 0)
+        if count < 3:
             diverse_points.append(p)
-            seen_files.add(fname)
-        if len(diverse_points) >= 12: break # Get 12 unique files
+            file_chunk_counts[fname] = count + 1
+        if len(diverse_points) >= 15: break
         
-    # If we don't have enough unique files, fill with remaining points
-    if len(diverse_points) < 12:
-        for p in points:
-            if p not in diverse_points:
-                diverse_points.append(p)
-            if len(diverse_points) >= 15: break
-
     await manager.broadcast({
         "stage": "retrieval_end", 
-        "files": list(seen_files)
+        "files": list(file_chunk_counts.keys())
     })
     
-    return diverse_points[:12], matched_brand
+    return diverse_points, (matched_primary_brand or matched_component_brand)
 
 async def call_llm(system_prompt: str, user_content: str, history: List[Dict[str, str]] = None):
     messages = [{"role": "system", "content": system_prompt}]
@@ -212,49 +220,87 @@ async def process_query(user_id: str, query_text: str):
     logger.info(f"Processing: {query_text} (User: {user_id})")
     await manager.broadcast({"stage": "query_received", "text": query_text, "user": user_id})
     
-    # Save user query immediately
-    save_history(user_id, "user", query_text)
+    query_upper = query_text.upper()
+    query_clean = query_text.lower().replace(" ", "").strip()
     
-    # --- INTENT ROUTING (Greeting / Small Talk) ---
-    greetings = ["สวัสดี", "hello", "hi", "หวัดดี", "สอบถาม", "ถามหน่อย", "กูรู", "expert"]
-    query_lower = query_text.lower().strip()
+    has_brand = any(kw in query_upper for kw_list in ALL_BRAND_KEYWORDS.values() for kw in kw_list)
+    if not has_brand:
+        if re.search(r'\b[A-Z]{1,2}[0-9]{2,3}(-[A-Z0-9]+)?\b', query_upper):
+            has_brand = True
     
-    # If it's just a greeting or very short, don't use RAG
-    if any(g == query_lower for g in greetings) or (len(query_lower) < 15 and any(g in query_lower for g in greetings)):
+    is_greeting = False
+    greetings = ["สวัสดี", "hello", "hi", "หวัดดี", "สวส", "กูรู", "guru", "expert", "ทักทาย", "ดีจ้า", "ดีครับ", "สอบถาม", "ถาม", "ขอทราบ"]
+    for g in greetings:
+        if g in query_clean:
+            is_greeting = True
+            break
+            
+    if is_greeting and (not has_brand or len(query_text) < 12):
         greeting_response = "สวัสดีครับ! ผมคือผู้เชี่ยวชาญด้านเทคนิค Server และ Software Solutions ยินดีให้ข้อมูลเกี่ยวกับผลิตภัณฑ์ GIGABYTE, Supermicro, AMD, Intel, NVIDIA, Cloudera, SAS, Infinitix และ Solomon ครับ วันนี้ต้องการสอบถามเรื่องอะไรดีครับ?"
         await manager.broadcast({"stage": "llm_end", "answer": greeting_response})
+        save_history(user_id, "user", query_text)
         save_history(user_id, "assistant", greeting_response)
         return greeting_response
 
-    # Get history for this specific user
     history = get_history(user_id)
+    save_history(user_id, "user", query_text)
     
+    brand_from_history = None
+    if not has_brand:
+        for h in reversed(history):
+            h_upper = h["content"].upper()
+            for brand, keywords in ALL_BRAND_KEYWORDS.items():
+                if any(kw in h_upper for kw in keywords):
+                    brand_from_history = brand
+                    break
+            if brand_from_history: break
+
     try:
-        context_docs, matched_brand = await hybrid_search(query_text)
+        context_docs, matched_brand = await hybrid_search(query_text, brand_override=brand_from_history)
+        
+        if not context_docs:
+            no_info_msg = f"ขออภัยครับ ไม่พบข้อมูลเกี่ยวกับเรื่องนี้ในเอกสารที่จัดเตรียมไว้ (แบรนด์: {matched_brand or 'ทั่วไป'}) กรุณาสอบถามเกี่ยวกับแบรนด์ที่เราดูแล เช่น GIGABYTE, Supermicro, NVIDIA, SAS, Solomon เป็นต้นครับ"
+            await manager.broadcast({"stage": "llm_end", "answer": no_info_msg})
+            save_history(user_id, "assistant", no_info_msg)
+            return no_info_msg
+
         context_text = "\n".join([f"Source File: {d.get('payload',{}).get('filename')}\n{d.get('payload',{}).get('text')}" for d in context_docs])
         
-        # Check for brand switch in history to force clear
-        history_to_send = [h for h in history if h["role"] != "user" or h["content"] != query_text]
+        history_to_send = history
         if matched_brand:
-            last_assistant_msg = next((m["content"].upper() for m in reversed(history_to_send) if m["role"] == "assistant"), "")
-            if last_assistant_msg and matched_brand not in last_assistant_msg:
-                logger.info(f"Brand switch detected: {matched_brand}. Clearing history for this turn.")
-                history_to_send = []
+            current_detected_brand = None
+            for brand, keywords in ALL_BRAND_KEYWORDS.items():
+                if any(kw in query_upper for kw in keywords):
+                    current_detected_brand = brand
+                    break
+            
+            if current_detected_brand:
+                last_assistant_msg = next((m["content"].upper() for m in reversed(history_to_send) if m["role"] == "assistant"), "")
+                if last_assistant_msg:
+                    last_was_different_brand = False
+                    for b, kws in PRIMARY_BRANDS.items():
+                        if b != current_detected_brand and any(kw in last_assistant_msg for kw in kws):
+                            last_was_different_brand = True
+                            break
+                    
+                    if last_was_different_brand:
+                        logger.info(f"Brand switch detected: {current_detected_brand}. Clearing history for this turn.")
+                        history_to_send = []
 
-        system_prompt = """คุณคือที่ปรึกษาด้านเทคนิค Server และ Software Solutions ผู้เชี่ยวชาญ
+        system_prompt = f"""คุณคือที่ปรึกษาด้านเทคนิค Server และ Software Solutions ผู้เชี่ยวชาญ
         ภารกิจ: ตอบคำถามโดยใช้ข้อมูลจาก "CONTEXT DATA" ที่ให้มาเท่านั้น
-        - **สำคัญ**: หากข้อมูลใน CONTEXT DATA มีความกระจัดกระจายหรือเป็นข้อความสั้นๆ ให้พยายามสรุปใจความสำคัญที่เกี่ยวข้องกับคำถามที่สุด
+        - **ห้ามใช้ความรู้ภายนอก (Internal Knowledge) ของคุณมาตอบเด็ดขาด**
+        - หากไม่มีคำตอบใน CONTEXT DATA ให้ตอบว่า "ขออภัยครับ ไม่พบข้อมูลที่ระบุในเอกสาร" ทันที ห้ามคาดเดา
+        - ห้ามประดิษฐ์สเปคหรือตัวเลขขึ้นมาเองเด็ดขาด
         - ตอบคำถามปัจจุบันโดยตรงในประโยคแรก
-        - ห้ามนำข้อมูลจากแบรนด์อื่นที่เคยคุยก่อนหน้ามาตอบเด็ดขาด ให้ยึดตามเอกสารที่ดึงมา (CONTEXT DATA) ล่าสุดเท่านั้น
-        - หากไม่พบข้อมูลที่ระบุใน CONTEXT DATA จริงๆ ให้แจ้งว่าไม่พบข้อมูลในเอกสาร
         - ใช้ภาษาไทยที่กระชับ เป็นทางการ และตรงประเด็น"""
         
-        user_content = f"--- IMPORTANT: NEW TOPIC ({matched_brand or 'General'}) ---\nCONTEXT DATA:\n{context_text}\n\nUSER QUESTION: {query_text}"
+        user_content = f"CONTEXT DATA:\n{context_text}\n\nUSER QUESTION: {query_text}"
         
         await manager.broadcast({"stage": "llm_start"})
         final_answer = await call_llm(system_prompt, user_content, history=history_to_send)
-        await manager.broadcast({"stage": "llm_end", "answer": final_answer})
         
+        await manager.broadcast({"stage": "llm_end", "answer": final_answer})
         save_history(user_id, "assistant", final_answer)
         return final_answer
     except Exception as e:
@@ -262,7 +308,6 @@ async def process_query(user_id: str, query_text: str):
         logger.error(f"Error processing query: {e}")
         save_history(user_id, "assistant", error_msg)
         return error_msg
-
 
 # --- API Endpoints ---
 
@@ -350,7 +395,6 @@ async def get_status():
         }
     }
     
-    # GPU Monitoring
     try:
         gpu_res = subprocess.check_output(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"], encoding='utf-8')
         status["hardware"]["gpu"] = float(gpu_res.strip().split('\n')[0])
@@ -366,30 +410,12 @@ async def get_status():
     except: pass
     return status
 
-from ingest_optimized import run_ingestion
+from ingest_slow import main as run_ingestion_slow
 import threading
 
 @app.post("/api/ingest")
 async def trigger_ingest():
-    def progress_callback(data):
-        # We need an event loop to run the async broadcast from a thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(manager.broadcast(data))
-        loop.close()
-
-    def do_ingest():
-        try:
-            run_ingestion(progress_callback=progress_callback)
-        except Exception as e:
-            logger.error(f"Manual ingestion failed: {e}")
-            # Since do_ingest runs in a thread, we use a separate loop to broadcast error
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(manager.broadcast({"stage": "system", "message": f"Ingestion Error: {str(e)}"}))
-            loop.close()
-
-    threading.Thread(target=do_ingest).start()
+    threading.Thread(target=run_ingestion_slow).start()
     return {"status": "ingestion_started"}
 
 @app.post("/api/restart")
