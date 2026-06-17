@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KM RAG - AI Knowledge Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
+        * { font-family: 'Prompt', sans-serif; }
+        body { 
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            min-height: 100vh;
+        }
+        .glass { 
+            background: rgba(30, 41, 59, 0.7); 
+            backdrop-filter: blur(20px); 
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .chat-container {
+            height: calc(100vh - 200px);
+            min-height: 400px;
+        }
+        .message-user {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            border-radius: 20px 20px 4px 20px;
+        }
+        .message-bot {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px 20px 20px 4px;
+        }
+        .typing-indicator span {
+            animation: blink 1.4s infinite both;
+        }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes blink {
+            0%, 60%, 100% { opacity: 0.2; }
+            30% { opacity: 1; }
+        }
+        .brand-btn.active {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: white;
+            border-color: #3b82f6;
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="p-4 md:p-6">
+    <div class="max-w-5xl mx-auto">
+        <!-- Header -->
+        <header class="flex items-center justify-between mb-6">
+            <div class="flex items-center gap-3">
+                <div class="p-3 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl shadow-lg shadow-blue-500/30">
+                    <i class="fas fa-robot text-xl text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold text-white">KM RAG <span class="text-blue-400">Assistant</span></h1>
+                    <p class="text-slate-400 text-xs">AI Knowledge Management System</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <div id="status-indicator" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                    <span class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                    <span class="text-emerald-400 text-xs font-medium">Online</span>
+                </div>
+                <a href="/" class="p-2 rounded-xl bg-slate-800/50 hover:bg-slate-700/50 text-slate-400 hover:text-white transition-all">
+                    <i class="fas fa-chart-line"></i>
+                </a>
+            </div>
+        </header>
+
+        <!-- Brand Selector -->
+        <div class="mb-4 flex flex-wrap gap-2">
+            <button onclick="setBrand('')" class="brand-btn active px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-600 text-slate-300 hover:border-blue-500 transition-all">
+                <i class="fas fa-globe mr-1"></i> ทั้งหมด
+            </button>
+            <button onclick="setBrand('GIGABYTE')" class="brand-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-600 text-slate-300 hover:border-blue-500 transition-all">
+                <i class="fas fa-server mr-1"></i> GIGABYTE
+            </button>
+            <button onclick="setBrand('SUPERMICRO')" class="brand-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-600 text-slate-300 hover:border-blue-500 transition-all">
+                <i class="fas fa-server mr-1"></i> Supermicro
+            </button>
+            <button onclick="setBrand('NVIDIA')" class="brand-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-600 text-slate-300 hover:border-blue-500 transition-all">
+                <i class="fas fa-microchip mr-1"></i> NVIDIA
+            </button>
+            <button onclick="setBrand('AMD')" class="brand-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-600 text-slate-300 hover:border-blue-500 transition-all">
+                <i class="fas fa-microchip mr-1"></i> AMD
+            </button>
+            <button onclick="setBrand('INTEL')" class="brand-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-600 text-slate-300 hover:border-blue-500 transition-all">
+                <i class="fas fa-microchip mr-1"></i> Intel
+            </button>
+            <button onclick="setBrand('CLOUDERA')" class="brand-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-600 text-slate-300 hover:border-blue-500 transition-all">
+                <i class="fas fa-cloud mr-1"></i> Cloudera
+            </button>
+            <button onclick="setBrand('SAS')" class="brand-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-600 text-slate-300 hover:border-blue-500 transition-all">
+                <i class="fas fa-chart-bar mr-1"></i> SAS
+            </button>
+            <button onclick="setBrand('SOLOMON')" class="brand-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-600 text-slate-300 hover:border-blue-500 transition-all">
+                <i class="fas fa-eye mr-1"></i> Solomon
+            </button>
+            <button onclick="setBrand('INFINITIX')" class="brand-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-600 text-slate-300 hover:border-blue-500 transition-all">
+                <i class="fas fa-brain mr-1"></i> Infinitix
+            </button>
+        </div>
+
+        <!-- Chat Container -->
+        <div class="glass rounded-3xl overflow-hidden">
+            <!-- Messages Area -->
+            <div id="chat-messages" class="chat-container overflow-y-auto p-6 space-y-4">
+                <!-- Welcome Message -->
+                <div class="flex gap-3 fade-in">
+                    <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-robot text-white text-sm"></i>
+                    </div>
+                    <div class="message-bot px-4 py-3 max-w-[80%]">
+                        <p class="text-slate-200 text-sm leading-relaxed">
+                            สวัสดีครับ! ผมคือ AI ผู้เชี่ยวชาญด้านเทคนิค Server และ Software Solutions ยินดีให้ข้อมูลเกี่ยวกับ
+                            <span class="text-blue-400 font-medium">GIGABYTE</span>,
+                            <span class="text-blue-400 font-medium">Supermicro</span>,
+                            <span class="text-green-400 font-medium">NVIDIA</span>,
+                            <span class="text-red-400 font-medium">AMD</span>,
+                            <span class="text-blue-300 font-medium">Intel</span>,
+                            <span class="text-purple-400 font-medium">Cloudera</span>,
+                            <span class="text-yellow-400 font-medium">SAS</span>,
+                            <span class="text-pink-400 font-medium">Solomon</span>, และ
+                            <span class="text-cyan-400 font-medium">Infinitix</span> ครับ
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="p-4 border-t border-white/5">
+                <form id="chat-form" class="flex gap-3">
+                    <div class="flex-1 relative">
+                        <input 
+                            type="text" 
+                            id="chat-input" 
+                            placeholder="พิมพ์คำถามของคุณ..." 
+                            class="w-full px-5 py-3.5 bg-slate-800/50 border border-slate-600/50 rounded-2xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30 transition-all"
+                            autocomplete="off"
+                        >
+                        <div id="typing-indicator" class="hidden absolute right-4 top-1/2 -translate-y-1/2">
+                            <div class="typing-indicator flex gap-1">
+                                <span class="w-1.5 h-1.5 bg-blue-400 rounded-full"></span>
+                                <span class="w-1.5 h-1.5 bg-blue-400 rounded-full"></span>
+                                <span class="w-1.5 h-1.5 bg-blue-400 rounded-full"></span>
+                            </div>
+                        </div>
+                    </div>
+                    <button 
+                        type="submit" 
+                        id="send-btn"
+                        class="px-5 py-3.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-2xl font-medium transition-all shadow-lg shadow-blue-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </form>
+                <div class="mt-2 flex items-center justify-between text-xs text-slate-500">
+                    <span>กด Enter เพื่อส่งคำถาม</span>
+                    <span id="char-count">0 ตัวอักษร</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Questions -->
+        <div class="mt-4 glass rounded-2xl p-4">
+            <p class="text-xs text-slate-500 mb-3 font-medium">ตัวอย่างคำถามที่ถามได้:</p>
+            <div class="flex flex-wrap gap-2">
+                <button onclick="askQuestion('GIGABYTE มี server รุ่นอะไรบ้าง')" class="px-3 py-1.5 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-600/50 rounded-lg text-xs text-slate-300 hover:text-white transition-all">
+                    GIGABYTE server รุ่นอะไรบ้าง
+                </button>
+                <button onclick="askQuestion('Supermicro SYS-511R-ML สเปคเป็นยังไง')" class="px-3 py-1.5 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-600/50 rounded-lg text-xs text-slate-300 hover:text-white transition-all">
+                    Supermicro SYS-511R-ML สเปค
+                </button>
+                <button onclick="askQuestion('NVIDIA H200 มี VRAM เท่าไหร่')" class="px-3 py-1.5 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-600/50 rounded-lg text-xs text-slate-300 hover:text-white transition-all">
+                    NVIDIA H200 VRAM
+                </button>
+                <button onclick="askQuestion('AMD EPYC 9004 มีกี่ cores')" class="px-3 py-1.5 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-600/50 rounded-lg text-xs text-slate-300 hover:text-white transition-all">
+                    AMD EPYC 9004 cores
+                </button>
+                <button onclick="askQuestion('Cloudera มี product อะไรบ้าง')" class="px-3 py-1.5 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-600/50 rounded-lg text-xs text-slate-300 hover:text-white transition-all">
+                    Cloudera products
+                </button>
+                <button onclick="askQuestion('Infinitix AI Stack ทำอะไรได้')" class="px-3 py-1.5 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-600/50 rounded-lg text-xs text-slate-300 hover:text-white transition-all">
+                    Infinitix AI-Stack
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedBrand = '';
+        let ws;
+        let isProcessing = false;
+        const userId = 'web_' + Math.random().toString(36).substr(2, 9);
+
+        // WebSocket Connection
+        function connectWS() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/flow`);
+            
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleWSMessage(msg);
+                } catch(e) {}
+            };
+
+            ws.onclose = () => setTimeout(connectWS, 2000);
+            ws.onerror = () => ws.close();
+        }
+
+        function handleWSMessage(msg) {
+            switch(msg.stage) {
+                case 'query_received':
+                    showTyping(true);
+                    break;
+                case 'retrieval_start':
+                    addSystemMessage('กำลังค้นหาข้อมูล...');
+                    break;
+                case 'retrieval_end':
+                    if (msg.files && msg.files.length > 0) {
+                        addSystemMessage(`พบ ${msg.files.length} แหล่งข้อมูลที่เกี่ยวข้อง`);
+                    }
+                    break;
+                case 'llm_start':
+                    addSystemMessage('กำลังวิเคราะห์และเรียบเรียงคำตอบ...');
+                    break;
+                case 'llm_end':
+                    showTyping(false);
+                    if (msg.answer) {
+                        addBotMessage(msg.answer);
+                    }
+                    isProcessing = false;
+                    document.getElementById('send-btn').disabled = false;
+                    break;
+            }
+        }
+
+        // UI Functions
+        function addBotMessage(text) {
+            const container = document.getElementById('chat-messages');
+            const div = document.createElement('div');
+            div.className = 'flex gap-3 fade-in';
+            div.innerHTML = `
+                <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center flex-shrink-0">
+                    <i class="fas fa-robot text-white text-sm"></i>
+                </div>
+                <div class="message-bot px-4 py-3 max-w-[80%]">
+                    <p class="text-slate-200 text-sm leading-relaxed whitespace-pre-wrap">${formatText(text)}</p>
+                </div>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function addUserMessage(text) {
+            const container = document.getElementById('chat-messages');
+            const div = document.createElement('div');
+            div.className = 'flex gap-3 justify-end fade-in';
+            div.innerHTML = `
+                <div class="message-user px-4 py-3 max-w-[80%]">
+                    <p class="text-white text-sm">${escapeHtml(text)}</p>
+                </div>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function addSystemMessage(text) {
+            const container = document.getElementById('chat-messages');
+            const div = document.createElement('div');
+            div.className = 'flex justify-center fade-in';
+            div.innerHTML = `
+                <div class="px-3 py-1.5 bg-slate-800/50 rounded-full text-xs text-slate-400">
+                    <i class="fas fa-info-circle mr-1"></i>${text}
+                </div>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function showTyping(show) {
+            document.getElementById('typing-indicator').classList.toggle('hidden', !show);
+        }
+
+        function formatText(text) {
+            return text
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white">$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Brand Selection
+        function setBrand(brand) {
+            selectedBrand = brand;
+            document.querySelectorAll('.brand-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if ((brand === '' && btn.textContent.includes('ทั้งหมด')) ||
+                    btn.textContent.includes(brand)) {
+                    btn.classList.add('active');
+                }
+            });
+        }
+
+        // Send Message
+        async function sendMessage(text) {
+            if (!text.trim() || isProcessing) return;
+            
+            isProcessing = true;
+            document.getElementById('send-btn').disabled = true;
+            addUserMessage(text);
+            document.getElementById('chat-input').value = '';
+            document.getElementById('char-count').textContent = '0 ตัวอักษร';
+            
+            try {
+                const response = await fetch('/webhook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        events: [{
+                            type: 'message',
+                            message: { type: 'text', text: text },
+                            source: { userId: userId }
+                        }]
+                    })
+                });
+                
+                if (!response.ok) {
+                    addSystemMessage('เกิดข้อผิดพลาดในการส่งคำถาม');
+                    isProcessing = false;
+                    document.getElementById('send-btn').disabled = false;
+                }
+            } catch (e) {
+                addSystemMessage('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้');
+                isProcessing = false;
+                document.getElementById('send-btn').disabled = false;
+            }
+        }
+
+        function askQuestion(text) {
+            document.getElementById('chat-input').value = text;
+            sendMessage(text);
+        }
+
+        // Event Listeners
+        document.getElementById('chat-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('chat-input');
+            sendMessage(input.value);
+        });
+
+        document.getElementById('chat-input').addEventListener('input', (e) => {
+            document.getElementById('char-count').textContent = `${e.target.value.length} ตัวอักษร`;
+        });
+
+        document.getElementById('chat-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                document.getElementById('chat-form').dispatchEvent(new Event('submit'));
+            }
+        });
+
+        // Initialize
+        connectWS();
+        document.getElementById('chat-input').focus();
+    </script>
+</body>
+</html>

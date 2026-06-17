@@ -517,6 +517,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/")
 async def read_root():
+    return FileResponse("chat.html")
+
+@app.get("/dashboard")
+async def read_dashboard():
     return FileResponse("dashboard.html")
 
 @app.post("/webhook")
