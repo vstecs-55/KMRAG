@@ -198,25 +198,19 @@ async def hybrid_search(query_text: str, brand_override: str = None):
                 brand_conditions.append({"should": [{"key": "filename", "match": {"text": "Supermicro"}}, {"key": "filename", "match": {"text": "sys-"}}, {"key": "filename", "match": {"text": "as-"}}, {"key": "filename", "match": {"text": "ars-"}}, {"key": "filename", "match": {"text": "ssg-"}}]})
             elif filter_brand == "NVIDIA":
                 # Use specific keywords based on query content
-                nvidia_conditions = [{"key": "filename", "match": {"text": "nvidia"}}, {"key": "filename", "match": {"text": "NVIDIA"}}, {"key": "filename", "match": {"text": "Nvidia"}}]
                 if "JETSON" in query_upper:
-                    nvidia_conditions.append({"key": "filename", "match": {"text": "Jetson"}})
+                    brand_conditions.append({"should": [{"key": "filename", "match": {"text": "Jetson"}}, {"key": "filename", "match": {"text": "jetson"}}]})
                 elif "AETINA" in query_upper:
-                    nvidia_conditions.append({"key": "filename", "match": {"text": "Aetina"}})
-                    nvidia_conditions.append({"key": "filename", "match": {"text": "aie-"}})
-                    nvidia_conditions.append({"key": "filename", "match": {"text": "aip-"}})
-                    nvidia_conditions.append({"key": "filename", "match": {"text": "aimxm"}})
+                    brand_conditions.append({"should": [{"key": "filename", "match": {"text": "Aetina"}}, {"key": "filename", "match": {"text": "aie-"}}, {"key": "filename", "match": {"text": "aip-"}}, {"key": "filename", "match": {"text": "aimxm"}}]})
                 elif "DGX" in query_upper:
-                    nvidia_conditions.append({"key": "filename", "match": {"text": "dgx"}})
+                    brand_conditions.append({"should": [{"key": "filename", "match": {"text": "dgx"}}, {"key": "filename", "match": {"text": "nvidia"}}, {"key": "filename", "match": {"text": "NVIDIA"}}]})
                 elif "H200" in query_upper:
-                    nvidia_conditions.append({"key": "filename", "match": {"text": "h200"}})
+                    brand_conditions.append({"should": [{"key": "filename", "match": {"text": "h200"}}, {"key": "filename", "match": {"text": "nvidia"}}, {"key": "filename", "match": {"text": "NVIDIA"}}]})
                 elif "GH200" in query_upper:
-                    nvidia_conditions.append({"key": "filename", "match": {"text": "gh200"}})
-                    nvidia_conditions.append({"key": "filename", "match": {"text": "ars-111"}})
+                    brand_conditions.append({"should": [{"key": "filename", "match": {"text": "gh200"}}, {"key": "filename", "match": {"text": "ars-111"}}, {"key": "filename", "match": {"text": "nvidia"}}]})
                 else:
                     # General NVIDIA query - include all NVIDIA-related files
-                    nvidia_conditions.extend([{"key": "filename", "match": {"text": "dgx"}}, {"key": "filename", "match": {"text": "h200"}}, {"key": "filename", "match": {"text": "jetson"}}, {"key": "filename", "match": {"text": "aetina"}}])
-                brand_conditions.append({"should": nvidia_conditions})
+                    brand_conditions.append({"should": [{"key": "filename", "match": {"text": "nvidia"}}, {"key": "filename", "match": {"text": "NVIDIA"}}, {"key": "filename", "match": {"text": "dgx"}}, {"key": "filename", "match": {"text": "h200"}}, {"key": "filename", "match": {"text": "jetson"}}, {"key": "filename", "match": {"text": "aetina"}}]})
             elif filter_brand == "GIGABYTE":
                 brand_conditions.append({"should": [{"key": "filename", "match": {"text": "gigabyte"}}, {"key": "filename", "match": {"text": "GIGABYTE"}}, {"key": "filename", "match": {"text": "Gigabyte"}}]})
             elif filter_brand == "AMD":
@@ -252,6 +246,18 @@ async def hybrid_search(query_text: str, brand_override: str = None):
         logger.info(f"Fallback search: 0 results with brand {matched_primary_brand}, retrying without filter.")
         points = perform_qdrant_search(None)
         matched_primary_brand = None # Reset brand if fallback triggered
+    
+    # For cross-brand queries, also search for component brand files
+    if has_cross_brand and matched_component_brand:
+        component_points = perform_qdrant_search(None)  # Search without filter for component brand
+        # Add component brand results that aren't already in the list
+        existing_ids = {p.get("id") for p in points}
+        for p in component_points:
+            if p.get("id") not in existing_ids:
+                text = p.get("payload", {}).get("text", "").upper()
+                if matched_component_brand in text:
+                    points.append(p)
+                    existing_ids.add(p.get("id"))
 
     # Score and Rank
     def score_chunk(p):
@@ -260,16 +266,27 @@ async def hybrid_search(query_text: str, brand_override: str = None):
         score = 0
         
         # Extract model numbers from query and check if they appear in text
+        # Match patterns like: 9754, 9654P, SYS-511R-ML, G294-S43, H173-Z80
         query_model_numbers = re.findall(r'\b\d{4}[A-Z]?\b', query_upper)
         for model_num in query_model_numbers:
             if model_num in text:
-                score += 8000
+                score += 15000
             if model_num in fname:
-                score += 5000
+                score += 10000
         
-        # Partial model name matching (e.g., G294 matches G294-S43-AAP2)
-        query_model_parts = re.findall(r'\b[A-Z]\d{3}\b', query_upper)
+        # Match patterns like: SYS-511R, G294, H173
+        query_model_parts = re.findall(r'\b[A-Z]+-?\d{3,4}[A-Z-]*\b', query_upper)
         for part in query_model_parts:
+            if part in text:
+                score += 12000
+            if part in fname:
+                score += 10000
+        
+        # Also check for partial matches like 511R, G294
+        query_short = re.findall(r'\b\d{3}[A-Z]?\b', query_upper)
+        for part in query_short:
+            if part in text:
+                score += 8000
             if part in fname:
                 score += 6000
         
