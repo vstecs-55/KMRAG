@@ -2,7 +2,7 @@ import os
 import sys
 import argparse
 import pandas as pd
-import pypdfium2 as pdfium
+import pdfplumber
 from docx import Document
 from pptx import Presentation
 from typing import List, Optional
@@ -107,17 +107,38 @@ def semantic_chunking(text: str, chunk_size: int = 700, overlap: int = 150) -> L
 
 def parse_pdf(file_path: str) -> str:
     """
-    Reads a PDF file using pypdfium2 and applies semantic chunking.
+    Reads a PDF file using pdfplumber (better for tables) and applies semantic chunking.
     """
     try:
         text = ""
-        pdf = pdfium.PdfDocument(file_path)
-        for i in range(len(pdf)):
-            page = pdf.get_page(i)
-            textpage = page.get_textpage()
-            page_text = textpage.get_text_range()
-            if page_text:
-                text += page_text + "\n\n"
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                # Extract text
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n\n"
+                
+                # Extract tables and convert to text
+                tables = page.extract_tables()
+                for table in tables:
+                    for row in table:
+                        if row:
+                            # Filter out None values and join
+                            row_text = " | ".join(str(cell) if cell else "" for cell in row)
+                            if row_text.strip():
+                                text += row_text + "\n"
+                    text += "\n"
+        
+        if not text.strip():
+            # Fallback to pypdfium2 if pdfplumber fails
+            import pypdfium2 as pdfium
+            pdf = pdfium.PdfDocument(file_path)
+            for i in range(len(pdf)):
+                page = pdf.get_page(i)
+                textpage = page.get_textpage()
+                page_text = textpage.get_text_range()
+                if page_text:
+                    text += page_text + "\n\n"
         
         chunks = semantic_chunking(text)
         return "\n\n---CHUNK---\n\n".join(chunks)
