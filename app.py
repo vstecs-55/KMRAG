@@ -158,6 +158,10 @@ async def hybrid_search(query_text: str, brand_override: str = None):
         search_query += " Solomon AI Wearable Smart Solution"
     if "SAS" in query_upper:
         search_query += " SAS Analytics Software Platform"
+    # Add specific model number for better matching
+    model_nums = re.findall(r'\b\d{4}[A-Z]?\b', query_upper)
+    for num in model_nums:
+        search_query += f" {num} specification datasheet"
         
     await manager.broadcast({"stage": "retrieval_start", "query": search_query})
     vector = get_embedding(search_query)
@@ -324,12 +328,66 @@ async def hybrid_search(query_text: str, brand_override: str = None):
 
     points.sort(key=score_chunk, reverse=True)
     
+    # Priority: exact model match first, then diversity
+    exact_model_matches = []
+    other_points = []
+    
+    # Extract model parts from query - match full model like G294-S43, SYS-511R-ML
+    query_model_parts = re.findall(r'\b[A-Z]+-?\d{3,4}-?[A-Z0-9]+(?:-[A-Z0-9]+)*\b', query_upper)
+    # Match 4-digit model numbers like 9754, 9654
+    query_4digit = re.findall(r'\b\d{4}[A-Z]?\b', query_upper)
+    
+    all_query_parts = query_model_parts + query_4digit
+    
+    for p in points:
+        fname = p.get("payload", {}).get("filename", "").upper()
+        text = p.get("payload", {}).get("text", "").upper()
+        
+        # Check if this is an exact model match
+        is_exact = False
+        for part in all_query_parts:
+            if len(part) >= 5:  # Only full model matches (G294-S43, 9754, etc.)
+                if part in fname or part in text:
+                    is_exact = True
+                    break
+        
+        if is_exact:
+            exact_model_matches.append(p)
+        else:
+            other_points.append(p)
+    
+    # If we have exact matches, also search for more chunks from the same file
+    if exact_model_matches and len(exact_model_matches) < 5:
+        # Find the exact model filename
+        exact_filenames = set()
+        for p in exact_model_matches:
+            exact_filenames.add(p.get("payload", {}).get("filename", ""))
+        
+        # Add more chunks from the same files
+        for p in points:
+            fname = p.get("payload", {}).get("filename", "")
+            if fname in exact_filenames and p not in exact_model_matches:
+                exact_model_matches.append(p)
+                if len(exact_model_matches) >= 10:
+                    break
+    
+    # Take all exact matches first, then fill with diversity
     file_chunk_counts = {}
     diverse_points = []
-    for p in points:
+    
+    # Add exact matches (up to 5 per file)
+    for p in exact_model_matches:
         fname = p.get("payload", {}).get("filename")
         count = file_chunk_counts.get(fname, 0)
         if count < 5:
+            diverse_points.append(p)
+            file_chunk_counts[fname] = count + 1
+    
+    # Add other points with diversity (up to 3 per file)
+    for p in other_points:
+        fname = p.get("payload", {}).get("filename")
+        count = file_chunk_counts.get(fname, 0)
+        if count < 3:
             diverse_points.append(p)
             file_chunk_counts[fname] = count + 1
         if len(diverse_points) >= 20: break
@@ -355,7 +413,7 @@ async def call_llm(system_prompt: str, user_content: str, history: List[Dict[str
     }
     
     try:
-        res = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=120)
+        res = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=180)
         res.raise_for_status()
         return res.json()["message"]["content"]
     except Exception as e:
@@ -467,7 +525,8 @@ async def process_query(user_id: str, query_text: str):
 - หากไม่มีข้อมูลเลยจริงๆ ให้แจ้งว่าไม่พบข้อมูล
 - สังเกต "MODELS AVAILABLE" ที่แสดงรายการโมเดลทั้งหมด ใช้ข้อมูลนั้นในการตอบคำถามเกี่ยวกับโมเดล
 - ตอบคำถามปัจจุบันโดยตรงในประโยคแรก
-- ใช้ภาษาไทยที่กระชับ เป็นทางการ และตรงประเด็น"""
+- ใช้ภาษาไทยที่กระชับ เป็นทางการ และตรงประเด็น
+- หากมีข้อมูลในเอกสารที่เกี่ยวข้องกับคำถาม แม้จะไม่ตรง 100% ให้ตอบตามข้อมูลที่มี"""
         
         user_content = f"CONTEXT DATA:\n{context_text}\n\nUSER QUESTION: {query_text}"
         
