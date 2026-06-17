@@ -7,9 +7,9 @@ import logging
 # Configuration
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-COLLECTION_NAME = "km_//_knowledge" # Adjusted based on actual collection
+COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "km_knowledge")
 DB_PATH = "chat_history.db"
-MODEL_GEN = "llama3.3:70b"
+MODEL_GEN = os.environ.get("MODEL_GEN", "llama3.2-vision:11b")
 MODEL_EMBED = "mxbai-embed-large"
 
 logging.basicConfig(level=logging.INFO)

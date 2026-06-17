@@ -4,6 +4,7 @@ import argparse
 import pandas as pd
 import pypdfium2 as pdfium
 from docx import Document
+from pptx import Presentation
 from typing import List, Optional
 
 class ParserError(Exception):
@@ -141,6 +142,28 @@ def parse_word(file_path: str) -> str:
         # docx can raise various internal errors, wrapping them in ParserError
         raise ParserError(f"Error parsing Word file {file_path}: {str(e)}")
 
+def parse_pptx(file_path: str) -> str:
+    """
+    Reads a PowerPoint file and extracts text from all slides.
+    """
+    try:
+        prs = Presentation(file_path)
+        all_text = []
+        for slide_num, slide in enumerate(prs.slides, 1):
+            slide_text = []
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    slide_text.append(shape.text.strip())
+            if slide_text:
+                all_text.append(f"## Slide {slide_num}\n\n" + "\n\n".join(slide_text))
+        text = "\n\n".join(all_text)
+        chunks = semantic_chunking(text)
+        return "\n\n---CHUNK---\n\n".join(chunks)
+    except (FileNotFoundError, PermissionError) as e:
+        raise ParserError(f"File error parsing PowerPoint file {file_path}: {str(e)}")
+    except Exception as e:
+        raise ParserError(f"Error parsing PowerPoint file {file_path}: {str(e)}")
+
 def main():
     parser = argparse.ArgumentParser(description="Advanced Text Parsers for RAG")
     parser.add_argument("file_path", help="Path to the file to be parsed")
@@ -160,6 +183,8 @@ def main():
             result = parse_pdf(file_path)
         elif ext == '.docx':
             result = parse_word(file_path)
+        elif ext == '.pptx':
+            result = parse_pptx(file_path)
         elif ext in ['.txt', '.md']:
             result = parse_text(file_path)
         else:

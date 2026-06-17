@@ -1,30 +1,56 @@
 import os
-import requests
-import sqlite3
-import uuid
-import logging
-import subprocess
-import asyncio
-import json
 import re
-from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
+import json
+import uuid
+import sqlite3
+import logging
+import asyncio
+import subprocess
+import threading
+
+import requests
+import psutil
+from dotenv import load_dotenv
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any
 
+load_dotenv()
+
 # Configuration
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-COLLECTION_NAME = "km_knowledge"
-DB_PATH = "chat_history.db"
-LINE_TOKEN = "hg2DPV5v0z7cyJyuJsBkEBk/j+wNoUnrSLPOTRHL4TzWrqChXDZ1u6VRkzUtRCmEpEnR47gSrNoTurwwWwKit/fffi6PPnNY8WF6HVK1vLFkb9jPu6B+Wv7oHnAwJw48XhwXJy0ymBAzSRhAGwbxPgdB04t89/1O/w1cDnyilFU="
-MODEL_GEN = "llama3.2-vision:11b" 
-MODEL_EMBED = "mxbai-embed-large"
+COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "km_knowledge")
+DB_PATH = os.environ.get("DB_PATH", "chat_history.db")
+LINE_TOKEN = os.environ.get("LINE_TOKEN", "")
+MODEL_GEN = os.environ.get("MODEL_GEN", "llama3.2-vision:11b")
+MODEL_EMBED = os.environ.get("MODEL_EMBED", "mxbai-embed-large")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("KM-RAG-API")
 
 app = FastAPI()
+
+# --- Database Initialization ---
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_history_user ON history(user_id, timestamp DESC)")
+    conn.commit()
+    conn.close()
+
+init_db()
 
 # --- WebSocket Manager ---
 
@@ -99,10 +125,39 @@ async def hybrid_search(query_text: str, brand_override: str = None):
     search_query = query_text
     query_upper = query_text.upper()
     
+    # Query enhancement for better retrieval
     if "H200" in query_upper:
         search_query += " NVIDIA H200 HGX SXM5 8-GPU System"
+    if "GH200" in query_upper:
+        search_query += " NVIDIA GH200 Grace Hopper Superchip"
+    if "JETSON" in query_upper:
+        search_query += " NVIDIA Jetson Orin embedded GPU module"
+    if "AETINA" in query_upper:
+        search_query += " Aetina NVIDIA embedded GPU card"
     if any(x in query_upper for x in ["HDD", "SSD", "STORAGE", "BAYS", "ฮาร์ดดิสก์"]):
         search_query += " Storage Specification Drive Bays Capacity"
+    if "NVME" in query_upper or "M.2" in query_upper:
+        search_query += " NVMe M.2 Storage Drive"
+    if "DDR5" in query_upper:
+        search_query += " DDR5 Memory DIMM"
+    if "CORES" in query_upper or "CORE" in query_upper:
+        search_query += " CPU Cores Threads Processor"
+    if "GPU" in query_upper and "SUPPORT" not in query_upper:
+        search_query += " GPU Graphics Card Accelerator"
+    if "LIQUID" in query_upper or "COOLING" in query_upper:
+        search_query += " Liquid Cooling Thermal"
+    if "SLOT" in query_upper or "SLOTS" in query_upper or "PCIE" in query_upper:
+        search_query += " PCIe Slot Expansion"
+    if "POWER" in query_upper and "SUPPLY" in query_upper:
+        search_query += " Power Supply PSU"
+    if "CLOudERA" in query_upper or "คลาวเดอร่า" in query_upper:
+        search_query += " Cloudera Big Data Hadoop Data Platform"
+    if "INFINITIX" in query_upper or "อินฟินิทิกซ์" in query_upper:
+        search_query += " Infinitix AI Stack GPU"
+    if "SOLOMON" in query_upper or "โซโลมอน" in query_upper:
+        search_query += " Solomon AI Wearable Smart Solution"
+    if "SAS" in query_upper:
+        search_query += " SAS Analytics Software Platform"
         
     await manager.broadcast({"stage": "retrieval_start", "query": search_query})
     vector = get_embedding(search_query)
@@ -110,28 +165,72 @@ async def hybrid_search(query_text: str, brand_override: str = None):
     matched_primary_brand = brand_override if brand_override in PRIMARY_BRANDS else None
     matched_component_brand = brand_override if brand_override in COMPONENT_BRANDS else None
     
-    if not matched_primary_brand:
-        for brand, keywords in PRIMARY_BRANDS.items():
-            if any(kw in query_upper for kw in keywords):
-                matched_primary_brand = brand
-                break
-                
+    # Detect both primary and component brands simultaneously
+    detected_primary_brands = []
+    detected_component_brands = []
+    
+    for brand, keywords in PRIMARY_BRANDS.items():
+        if any(kw in query_upper for kw in keywords):
+            detected_primary_brands.append(brand)
+            
+    for brand, keywords in COMPONENT_BRANDS.items():
+        if any(kw in query_upper for kw in keywords):
+            detected_component_brands.append(brand)
+    
+    if not matched_primary_brand and detected_primary_brands:
+        matched_primary_brand = detected_primary_brands[0]
+        
     if not matched_primary_brand:
         if re.search(r'\b[A-Z]{1,2}[0-9]{2,3}(-[A-Z0-9]+)?\b', query_upper):
             matched_primary_brand = "GIGABYTE"
             
-    if not matched_component_brand:
-        for brand, keywords in COMPONENT_BRANDS.items():
-            if any(kw in query_upper for kw in keywords):
-                matched_component_brand = brand
-                break
+    if not matched_component_brand and detected_component_brands:
+        matched_component_brand = detected_component_brands[0]
+    
+    # For cross-brand queries, use primary brand filter but keep component brand for scoring
+    has_cross_brand = len(detected_primary_brands) > 0 and len(detected_component_brands) > 0
     
     def perform_qdrant_search(filter_brand=None):
         search_filter = None
         brand_conditions = []
         if filter_brand:
             if filter_brand == "SUPERMICRO":
-                brand_conditions.append({"should": [{"key": "filename", "match": {"text": "Supermicro"}}, {"key": "filename", "match": {"text": "sys-"}}, {"key": "filename", "match": {"text": "as-"}}]})
+                brand_conditions.append({"should": [{"key": "filename", "match": {"text": "Supermicro"}}, {"key": "filename", "match": {"text": "sys-"}}, {"key": "filename", "match": {"text": "as-"}}, {"key": "filename", "match": {"text": "ars-"}}, {"key": "filename", "match": {"text": "ssg-"}}]})
+            elif filter_brand == "NVIDIA":
+                # Use specific keywords based on query content
+                nvidia_conditions = [{"key": "filename", "match": {"text": "nvidia"}}, {"key": "filename", "match": {"text": "NVIDIA"}}, {"key": "filename", "match": {"text": "Nvidia"}}]
+                if "JETSON" in query_upper:
+                    nvidia_conditions.append({"key": "filename", "match": {"text": "Jetson"}})
+                elif "AETINA" in query_upper:
+                    nvidia_conditions.append({"key": "filename", "match": {"text": "Aetina"}})
+                    nvidia_conditions.append({"key": "filename", "match": {"text": "aie-"}})
+                    nvidia_conditions.append({"key": "filename", "match": {"text": "aip-"}})
+                    nvidia_conditions.append({"key": "filename", "match": {"text": "aimxm"}})
+                elif "DGX" in query_upper:
+                    nvidia_conditions.append({"key": "filename", "match": {"text": "dgx"}})
+                elif "H200" in query_upper:
+                    nvidia_conditions.append({"key": "filename", "match": {"text": "h200"}})
+                elif "GH200" in query_upper:
+                    nvidia_conditions.append({"key": "filename", "match": {"text": "gh200"}})
+                    nvidia_conditions.append({"key": "filename", "match": {"text": "ars-111"}})
+                else:
+                    # General NVIDIA query - include all NVIDIA-related files
+                    nvidia_conditions.extend([{"key": "filename", "match": {"text": "dgx"}}, {"key": "filename", "match": {"text": "h200"}}, {"key": "filename", "match": {"text": "jetson"}}, {"key": "filename", "match": {"text": "aetina"}}])
+                brand_conditions.append({"should": nvidia_conditions})
+            elif filter_brand == "GIGABYTE":
+                brand_conditions.append({"should": [{"key": "filename", "match": {"text": "gigabyte"}}, {"key": "filename", "match": {"text": "GIGABYTE"}}, {"key": "filename", "match": {"text": "Gigabyte"}}]})
+            elif filter_brand == "AMD":
+                brand_conditions.append({"should": [{"key": "filename", "match": {"text": "amd"}}, {"key": "filename", "match": {"text": "AMD"}}, {"key": "filename", "match": {"text": "epyc"}}]})
+            elif filter_brand == "INTEL":
+                brand_conditions.append({"should": [{"key": "filename", "match": {"text": "intel"}}, {"key": "filename", "match": {"text": "INTEL"}}, {"key": "filename", "match": {"text": "Intel"}}, {"key": "filename", "match": {"text": "xeon"}}]})
+            elif filter_brand == "CLOUDERA":
+                brand_conditions.append({"should": [{"key": "filename", "match": {"text": "cloudera"}}, {"key": "filename", "match": {"text": "CLOUDERA"}}, {"key": "filename", "match": {"text": "Cloudera"}}, {"key": "filename", "match": {"text": "hadoop"}}]})
+            elif filter_brand == "INFINITIX":
+                brand_conditions.append({"should": [{"key": "filename", "match": {"text": "infinitix"}}, {"key": "filename", "match": {"text": "INFINITIX"}}, {"key": "filename", "match": {"text": "Infinitix"}}, {"key": "filename", "match": {"text": "AI-Stack"}}, {"key": "filename", "match": {"text": "ai-stack"}}, {"key": "filename", "match": {"text": "ai stack"}}]})
+            elif filter_brand == "SAS":
+                brand_conditions.append({"should": [{"key": "filename", "match": {"text": "sas"}}, {"key": "filename", "match": {"text": "SAS"}}]})
+            elif filter_brand == "SOLOMON":
+                brand_conditions.append({"should": [{"key": "filename", "match": {"text": "solomon"}}, {"key": "filename", "match": {"text": "SOLOMON"}}]})
             else:
                 brand_conditions.append({"should": [{"key": "filename", "match": {"text": filter_brand.upper()}}, {"key": "filename", "match": {"text": filter_brand.lower()}}, {"key": "filename", "match": {"text": filter_brand.capitalize()}}]})
         
@@ -160,14 +259,44 @@ async def hybrid_search(query_text: str, brand_override: str = None):
         fname = p.get("payload", {}).get("filename", "").upper()
         score = 0
         
+        # Extract model numbers from query and check if they appear in text
+        query_model_numbers = re.findall(r'\b\d{4}[A-Z]?\b', query_upper)
+        for model_num in query_model_numbers:
+            if model_num in text:
+                score += 8000
+            if model_num in fname:
+                score += 5000
+        
+        # Partial model name matching (e.g., G294 matches G294-S43-AAP2)
+        query_model_parts = re.findall(r'\b[A-Z]\d{3}\b', query_upper)
+        for part in query_model_parts:
+            if part in fname:
+                score += 6000
+        
         model_match = re.search(r'[0-9]{3}-[A-Z0-9-]{3,}', text)
         if model_match: score += 5000
         
+        # Keyword relevance
         if "H200" in text: score += 1000
         if "HGX" in text: score += 2000
         if "8 X" in text or "8X" in text or "8 GPU" in text: score += 1500
         if "BAYS" in text or "SATA" in text or "NVME" in text: score += 1200 
+        if "DDR5" in text and "DDR5" in query_upper: score += 2000
+        if "CORES" in text and "CORE" in query_upper: score += 2000
+        if "LIQUID" in text and "LIQUID" in query_upper: score += 2000
+        if "SLOT" in text and "SLOT" in query_upper: score += 1500
+        if "POWER SUPPLY" in text and "POWER" in query_upper: score += 1500
+        if "JETSON" in text and "JETSON" in query_upper: score += 3000
+        if "AETINA" in text and "AETINA" in query_upper: score += 3000
+        if "GH200" in text and "GH200" in query_upper: score += 3000
+        if "INTEL" in text and "INTEL" in query_upper: score += 1500
+        if "AMD" in text and "AMD" in query_upper: score += 1500
+        if "CLOudERA" in text and "CLOudERA" in query_upper: score += 2000
+        if "INFINITIX" in text and "INFINITIX" in query_upper: score += 2000
+        if "SOLOMON" in text and "SOLOMON" in query_upper: score += 2000
+        if "SAS" in text and "SAS" in query_upper and len(query_upper) < 15: score += 1500
         
+        # Brand matching (filename)
         if matched_primary_brand and matched_primary_brand in fname: score += 10000
         if "GIGABYTE" in fname or "GIGABYTE" in text: score += 2000
         if "SUPERMICRO" in fname or "SUPERMICRO" in text: score += 2000
@@ -183,10 +312,10 @@ async def hybrid_search(query_text: str, brand_override: str = None):
     for p in points:
         fname = p.get("payload", {}).get("filename")
         count = file_chunk_counts.get(fname, 0)
-        if count < 3:
+        if count < 5:
             diverse_points.append(p)
             file_chunk_counts[fname] = count + 1
-        if len(diverse_points) >= 15: break
+        if len(diverse_points) >= 20: break
         
     await manager.broadcast({
         "stage": "retrieval_end", 
@@ -264,7 +393,28 @@ async def process_query(user_id: str, query_text: str):
             save_history(user_id, "assistant", no_info_msg)
             return no_info_msg
 
-        context_text = "\n".join([f"Source File: {d.get('payload',{}).get('filename')}\n{d.get('payload',{}).get('text')}" for d in context_docs])
+        # Build context with model list and numbered docs
+        def is_readable(text):
+            """Check if text has readable content (not just raw table data)"""
+            words = text.split()
+            if len(words) < 10: return False
+            alpha_ratio = sum(c.isalpha() for c in text) / max(len(text), 1)
+            return alpha_ratio > 0.3
+        
+        # Sort: readable text first, then raw data
+        readable_docs = [d for d in context_docs if is_readable(d.get("payload", {}).get("text", ""))]
+        raw_docs = [d for d in context_docs if not is_readable(d.get("payload", {}).get("text", ""))]
+        sorted_docs = readable_docs[:12] + raw_docs[:8]
+        
+        unique_models = list(dict.fromkeys(d.get("payload", {}).get("filename", "unknown") for d in sorted_docs))
+        model_list = "\n".join(f"  - {m}" for m in unique_models[:20])
+        model_header = f"MODELS AVAILABLE (from filenames):\n{model_list}\n\n---\n\n"
+        context_parts = []
+        for idx, d in enumerate(sorted_docs, 1):
+            fname = d.get("payload", {}).get("filename", "unknown")
+            text = d.get("payload", {}).get("text", "")
+            context_parts.append(f"[Doc {idx}] {fname}\n{text.strip()}")
+        context_text = model_header + "\n---\n".join(context_parts)
         
         history_to_send = history
         if matched_brand:
@@ -287,13 +437,20 @@ async def process_query(user_id: str, query_text: str):
                         logger.info(f"Brand switch detected: {current_detected_brand}. Clearing history for this turn.")
                         history_to_send = []
 
-        system_prompt = f"""คุณคือที่ปรึกษาด้านเทคนิค Server และ Software Solutions ผู้เชี่ยวชาญ
-        ภารกิจ: ตอบคำถามโดยใช้ข้อมูลจาก "CONTEXT DATA" ที่ให้มาเท่านั้น
-        - **ห้ามใช้ความรู้ภายนอก (Internal Knowledge) ของคุณมาตอบเด็ดขาด**
-        - หากไม่มีคำตอบใน CONTEXT DATA ให้ตอบว่า "ขออภัยครับ ไม่พบข้อมูลที่ระบุในเอกสาร" ทันที ห้ามคาดเดา
-        - ห้ามประดิษฐ์สเปคหรือตัวเลขขึ้นมาเองเด็ดขาด
-        - ตอบคำถามปัจจุบันโดยตรงในประโยคแรก
-        - ใช้ภาษาไทยที่กระชับ เป็นทางการ และตรงประเด็น"""
+        system_prompt = """คุณคือผู้เชี่ยวชาญด้านเทคนิค Server และ Software Solutions
+ภารกิจ: ตอบคำถามโดยใช้ข้อมูลจากเอกสารที่ให้มา
+
+กฎการตอบ:
+- วิเคราะห์ข้อมูลในเอกสารให้ดี ทั้งข้อความปกติ ตาราง และข้อมูลดิบ
+- ข้อมูลตารางมักจะมี model name ตามด้วยตัวเลข เช่น 9754, 9654, SYS-511R-ML
+- หากพบข้อมูลที่เกี่ยวข้อง ให้ตอบตามข้อมูลนั้นโดยตรง
+- หากเอกสารมีข้อมูลของแบรนด์หรือผลิตภัณฑ์ที่เกี่ยวข้อง ให้ใช้ข้อมูลนั้นตอบ
+- หากมีข้อมูลบางส่วนที่เกี่ยวข้อง ให้ตอบตามข้อมูลที่มี พร้อมระบุว่าเป็นข้อมูลบางส่วน
+- ห้ามคิดค้นสเปคหรือตัวเลขขึ้นมาเอง
+- หากไม่มีข้อมูลเลยจริงๆ ให้แจ้งว่าไม่พบข้อมูล
+- สังเกต "MODELS AVAILABLE" ที่แสดงรายการโมเดลทั้งหมด ใช้ข้อมูลนั้นในการตอบคำถามเกี่ยวกับโมเดล
+- ตอบคำถามปัจจุบันโดยตรงในประโยคแรก
+- ใช้ภาษาไทยที่กระชับ เป็นทางการ และตรงประเด็น"""
         
         user_content = f"CONTEXT DATA:\n{context_text}\n\nUSER QUESTION: {query_text}"
         
@@ -377,8 +534,7 @@ async def line_webhook(request: Request):
     asyncio.create_task(run_and_reply())
     return {"status": "ok"}
 
-import psutil
-import shutil
+from ingest_slow import main as run_ingestion_slow
 
 @app.get("/api/status")
 async def get_status():
@@ -394,7 +550,7 @@ async def get_status():
             "gpu": 0
         }
     }
-    
+
     try:
         gpu_res = subprocess.check_output(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"], encoding='utf-8')
         status["hardware"]["gpu"] = float(gpu_res.strip().split('\n')[0])
@@ -410,9 +566,6 @@ async def get_status():
     except: pass
     return status
 
-from ingest_slow import main as run_ingestion_slow
-import threading
-
 @app.post("/api/ingest")
 async def trigger_ingest():
     threading.Thread(target=run_ingestion_slow).start()
@@ -425,7 +578,6 @@ async def restart_system():
         import time
         time.sleep(1)
         subprocess.run(["sudo", "systemctl", "restart", "km-rag.service"], check=False)
-    import threading
     threading.Thread(target=do_restart).start()
     return {"status": "restarting"}
 

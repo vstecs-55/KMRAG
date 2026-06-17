@@ -4,13 +4,16 @@ import json
 import uuid
 import logging
 import time
-from scripts.parsers import parse_pdf, parse_excel, parse_text, parse_word, ParserError
+from dotenv import load_dotenv
+from scripts.parsers import parse_pdf, parse_excel, parse_text, parse_word, parse_pptx, ParserError
+
+load_dotenv()
 
 # Configuration
-QDRANT_URL = "http://localhost:6333"
-OLLAMA_URL = "http://localhost:11434"
-COLLECTION_NAME = "km_knowledge"
-MODEL_EMBED = "mxbai-embed-large"
+QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "km_knowledge")
+MODEL_EMBED = os.environ.get("MODEL_EMBED", "mxbai-embed-large")
 CHECKPOINT_FILE = "ingest_checkpoint.json"
 LOG_FILE = "ingest.log"
 
@@ -59,7 +62,7 @@ def get_embedding(text):
 
 def ingest_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
-    if ext not in ['.pdf', '.xlsx', '.xls', '.docx', '.txt', '.md']:
+    if ext not in ['.pdf', '.xlsx', '.xls', '.docx', '.pptx', '.txt', '.md']:
         return True
         
     logger.info(f"Ingesting: {file_path}")
@@ -71,6 +74,8 @@ def ingest_file(file_path):
             content = parse_excel(file_path)
         elif ext == '.docx':
             content = parse_word(file_path)
+        elif ext == '.pptx':
+            content = parse_pptx(file_path)
         elif ext in ['.txt', '.md']:
             content = parse_text(file_path)
         else:
