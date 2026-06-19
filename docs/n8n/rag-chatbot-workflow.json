@@ -1,0 +1,168 @@
+{
+  "name": "RAG Chatbot — Line → Qdrant → Ollama → Line",
+  "nodes": [
+    {
+      "id": "webhook-line",
+      "name": "Line Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "parameters": {
+        "webhookId": "{{ $json.webhookId }}",
+        "httpMethod": "POST",
+        "path": "line-chat",
+        "responseMode": "responseNode",
+        "auth": "none"
+      },
+      "credentials": {}
+    },
+    {
+      "id": "extract-data",
+      "name": "Extract Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "jsCode": "// Extract userId and query text from Line webhook event\nconst event = $json.body.events[0];\nconst userId = event.source.userId;\nconst text = event.message.text;\n\nreturn {\n  userId,\n  text,\n  webhookId: $json.webhookId\n};"
+      }
+    },
+    {
+      "id": "get-embedding",
+      "name": "Get Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "parameters": {
+        "url": "http://localhost:11434/api/embeddings",
+        "method": "POST",
+        "body": "{{ { model: \"mxbai-embed-large\", prompt: $json.text } }}",
+        "contentType": "json"
+      },
+      "credentials": {}
+    },
+    {
+      "id": "search-qdrant",
+      "name": "Search Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "parameters": {
+        "url": "http://localhost:6333/collections/km_knowledge/search",
+        "method": "POST",
+        "body": "{{ { query_vector: $node[\"Get Embedding\"].json.embedding, limit: 5, with_payload: true } }}",
+        "contentType": "json"
+      },
+      "credentials": {}
+    },
+    {
+      "id": "draft-answer",
+      "name": "Draft Answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300],
+      "parameters": {
+        "url": "http://localhost:11434/api/chat",
+        "method": "POST",
+        "body": "{{ { model: \"llama3.3:70b\", messages: [ { role: \"system\", content: \"คุณคือที่ปรึกษาผู้เชี่ยวชาญ ตอบด้วยภาษาไทยเท่านั้น ใช้บริบทที่ได้รับเท่านั้น ห้ามสร้างข้อมูลขึ้นเอง\" }, { role: \"user\", content: \"บริบท: " + JSON.stringify($node[\"Search Qdrant\"].json.results) + \"\\n\\nคำถาม: " + $json.text + "\"" } ], format: \"json\", stream: false } }}",
+        "contentType": "json"
+      },
+      "credentials": {}
+    },
+    {
+      "id": "push-line",
+      "name": "Push to Line",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300],
+      "parameters": {
+        "url": "https://api.line.me/v2/bot/message/push",
+        "method": "POST",
+        "headers": "Authorization: Bearer {{ $env.LINE_TOKEN }}",
+        "body": "{{ { to: $node[\"Extract Data\"].json.userId, messages: [{ type: \"text\", text: $node[\"Draft Answer\"].json.message?.content || \"ขออภัย ระบบ暂无ข้อมูล\" }] } }}",
+        "contentType": "json"
+      },
+      "credentials": {}
+    },
+    {
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 300],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Line Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Data": {
+      "main": [
+        [
+          {
+            "node": "Get Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Embedding": {
+      "main": [
+        [
+          {
+            "node": "Search Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Draft Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Answer": {
+      "main": [
+        [
+          {
+            "node": "Push to Line",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push to Line": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true
+  },
+  "active": false
+}
