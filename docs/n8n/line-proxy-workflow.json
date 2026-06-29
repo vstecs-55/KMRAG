@@ -1,0 +1,118 @@
+[
+  {
+    "updatedAt": "2026-06-25T04:28:32.701Z",
+    "createdAt": "2026-06-25T04:28:29.090Z",
+    "id": "foDJWql33xyHeOCh",
+    "name": "KM RAG LINE Chatbot",
+    "description": null,
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "line-chat",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-node",
+        "name": "Line Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          250,
+          300
+        ],
+        "webhookId": "line-chat"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://localhost:8001/line/webhook",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.body) }}",
+          "options": {
+            "timeout": 15000
+          }
+        },
+        "id": "forward-to-apppy",
+        "name": "Forward to app.py",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          460,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ status: 'ok' }) }}",
+          "options": {}
+        },
+        "id": "respond-webhook-node",
+        "name": "Respond to Webhook",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          670,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Line Webhook": {
+        "main": [
+          [
+            {
+              "node": "Forward to app.py",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Forward to app.py": {
+        "main": [
+          [
+            {
+              "node": "Respond to Webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "staticData": null,
+    "meta": null,
+    "pinData": null,
+    "versionId": "2f971d39-ca03-46cc-ac58-c8efd6cdb16b",
+    "activeVersionId": "2f971d39-ca03-46cc-ac58-c8efd6cdb16b",
+    "versionCounter": 18,
+    "triggerCount": 1,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-06-25T04:28:29.092Z",
+        "createdAt": "2026-06-25T04:28:29.092Z",
+        "role": "workflow:owner",
+        "workflowId": "foDJWql33xyHeOCh",
+        "projectId": "tZM4EC5HWM6LdZdy",
+        "project": {
+          "updatedAt": "2026-06-25T03:57:52.773Z",
+          "createdAt": "2026-06-25T03:57:33.473Z",
+          "id": "tZM4EC5HWM6LdZdy",
+          "name": "Admin KM RAG <admin@kmrag.local>",
+          "type": "personal",
+          "icon": null,
+          "description": null
+        }
+      }
+    ]
+  }
+]
