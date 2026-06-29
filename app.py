@@ -420,7 +420,7 @@ async def call_llm(system_prompt: str, user_content: str, history: List[Dict[str
         logger.error(f"LLM Call failed: {e}")
         raise e
 
-async def process_query(user_id: str, query_text: str):
+async def process_query(user_id: str, query_text: str, brand_override: str = None):
     logger.info(f"Processing: {query_text} (User: {user_id})")
     await manager.broadcast({"stage": "query_received", "text": query_text, "user": user_id})
     
@@ -450,7 +450,7 @@ async def process_query(user_id: str, query_text: str):
     save_history(user_id, "user", query_text)
     
     brand_from_history = None
-    if not has_brand:
+    if not has_brand and not brand_override:
         for h in reversed(history):
             h_upper = h["content"].upper()
             for brand, keywords in ALL_BRAND_KEYWORDS.items():
@@ -459,8 +459,9 @@ async def process_query(user_id: str, query_text: str):
                     break
             if brand_from_history: break
 
+    effective_brand = brand_override or brand_from_history
     try:
-        context_docs, matched_brand = await hybrid_search(query_text, brand_override=brand_from_history)
+        context_docs, matched_brand = await hybrid_search(query_text, brand_override=effective_brand)
         
         if not context_docs:
             no_info_msg = f"ขออภัยครับ ไม่พบข้อมูลเกี่ยวกับเรื่องนี้ในเอกสารที่จัดเตรียมไว้ (แบรนด์: {matched_brand or 'ทั่วไป'}) กรุณาสอบถามเกี่ยวกับแบรนด์ที่เราดูแล เช่น GIGABYTE, Supermicro, NVIDIA, SAS, Solomon เป็นต้นครับ"
@@ -614,6 +615,17 @@ async def line_webhook(request: Request):
     asyncio.create_task(run_and_reply())
     return {"status": "ok"}
 
+@app.post("/api/chat")
+async def web_chat(request: Request):
+    body = await request.json()
+    user_id = (body.get("user_id") or "web_anonymous").strip()
+    message = (body.get("message") or "").strip()
+    brand = (body.get("brand") or "").strip().upper() or None
+    if not message:
+        return {"answer": "", "brand": brand or ""}
+    answer = await process_query(user_id, message, brand_override=brand)
+    return {"answer": answer, "brand": brand or ""}
+
 from ingest_slow import main as run_ingestion_slow
 
 @app.get("/api/status")
@@ -671,4 +683,5 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8001))
+    uvicorn.run(app, host="0.0.0.0", port=port)
