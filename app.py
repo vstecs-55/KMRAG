@@ -52,6 +52,19 @@ def init_db():
 
 init_db()
 
+@app.on_event("startup")
+async def warmup_models():
+    # Preload gen model into VRAM in background so the first real query doesn't hit the 180s timeout
+    def ping():
+        try:
+            requests.post(f"{OLLAMA_URL}/api/generate",
+                          json={"model": MODEL_GEN, "prompt": "hi", "keep_alive": -1, "options": {"num_predict": 1}},
+                          timeout=600)
+            logger.info(f"Model warmup complete: {MODEL_GEN}")
+        except Exception as e:
+            logger.warning(f"Model warmup failed: {e}")
+    threading.Thread(target=ping, daemon=True).start()
+
 # --- WebSocket Manager ---
 
 class ConnectionManager:
@@ -98,7 +111,7 @@ def save_history(user_id: str, role: str, content: str):
     conn.close()
 
 def get_embedding(text: str):
-    res = requests.post(f"{OLLAMA_URL}/api/embeddings", json={"model": MODEL_EMBED, "prompt": text})
+    res = requests.post(f"{OLLAMA_URL}/api/embeddings", json={"model": MODEL_EMBED, "prompt": text, "keep_alive": -1})
     res.raise_for_status()
     return res.json()["embedding"]
 
@@ -164,7 +177,7 @@ async def hybrid_search(query_text: str, brand_override: str = None):
         search_query += f" {num} specification datasheet"
         
     await manager.broadcast({"stage": "retrieval_start", "query": search_query})
-    vector = get_embedding(search_query)
+    vector = await asyncio.to_thread(get_embedding, search_query)
     
     matched_primary_brand = brand_override if brand_override in PRIMARY_BRANDS else None
     matched_component_brand = brand_override if brand_override in COMPONENT_BRANDS else None
@@ -243,17 +256,17 @@ async def hybrid_search(query_text: str, brand_override: str = None):
         return res.json().get("result", [])
 
     # First attempt: with detected brand
-    points = perform_qdrant_search(matched_primary_brand)
-    
+    points = await asyncio.to_thread(perform_qdrant_search, matched_primary_brand)
+
     # Fallback: if no results and a brand was used, try without brand filter
     if not points and matched_primary_brand:
         logger.info(f"Fallback search: 0 results with brand {matched_primary_brand}, retrying without filter.")
-        points = perform_qdrant_search(None)
+        points = await asyncio.to_thread(perform_qdrant_search, None)
         matched_primary_brand = None # Reset brand if fallback triggered
-    
+
     # For cross-brand queries, also search for component brand files
     if has_cross_brand and matched_component_brand:
-        component_points = perform_qdrant_search(None)  # Search without filter for component brand
+        component_points = await asyncio.to_thread(perform_qdrant_search, None)  # Search without filter for component brand
         # Add component brand results that aren't already in the list
         existing_ids = {p.get("id") for p in points}
         for p in component_points:
@@ -409,11 +422,12 @@ async def call_llm(system_prompt: str, user_content: str, history: List[Dict[str
         "model": MODEL_GEN,
         "messages": messages,
         "stream": False,
+        "keep_alive": -1,  # pin model in VRAM; cold load of 24GB qwen3.6 blows the 180s timeout
         "options": {"temperature": 0.1}
     }
     
     try:
-        res = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=180)
+        res = await asyncio.to_thread(requests.post, f"{OLLAMA_URL}/api/chat", json=payload, timeout=180)
         res.raise_for_status()
         return res.json()["message"]["content"]
     except Exception as e:
@@ -549,7 +563,7 @@ class ModelUpdate(BaseModel):
     model: str
 
 @app.get("/api/models")
-async def list_models():
+def list_models():  # ponytail: sync def = FastAPI runs it in threadpool, blocking requests.get is fine here
     try:
         res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
         res.raise_for_status()
@@ -566,8 +580,27 @@ async def update_model(data: ModelUpdate):
     logger.info(f"Active model updated to: {MODEL_GEN}")
     return {"status": "success", "model": MODEL_GEN}
 
+BIGDATA_AUTH_URL = os.environ.get("BIGDATA_AUTH_URL", "http://localhost:8000")
+
+def is_bigdata_admin(token: str) -> bool:
+    """Validate a Bigdata Website JWT and require role=admin (backend is the source of truth)."""
+    if not token:
+        return False
+    try:
+        res = requests.get(f"{BIGDATA_AUTH_URL}/api/auth/me",
+                           headers={"Authorization": f"Bearer {token}"}, timeout=5)
+        return res.status_code == 200 and res.json().get("role") == "admin"
+    except Exception:
+        return False
+
 @app.websocket("/ws/flow")
 async def websocket_endpoint(websocket: WebSocket):
+    # The flow feed broadcasts every user's queries/answers → admin only
+    token = websocket.query_params.get("token", "")
+    if not await asyncio.to_thread(is_bigdata_admin, token):
+        await websocket.accept()
+        await websocket.close(code=4401)
+        return
     await manager.connect(websocket)
     try:
         while True:
@@ -600,14 +633,14 @@ async def line_webhook(request: Request):
     async def run_and_reply():
         try:
             answer = await process_query(user_id, text)
-            res = requests.post("https://api.line.me/v2/bot/message/push",
+            res = await asyncio.to_thread(requests.post, "https://api.line.me/v2/bot/message/push",
                           headers={"Authorization": f"Bearer {LINE_TOKEN}"},
                           json={"to": user_id, "messages": [{"type": "text", "text": answer}]})
             res.raise_for_status()
         except Exception as e:
             logger.error(f"Error in background task: {e}")
             try:
-                requests.post("https://api.line.me/v2/bot/message/push",
+                await asyncio.to_thread(requests.post, "https://api.line.me/v2/bot/message/push",
                           headers={"Authorization": f"Bearer {LINE_TOKEN}"},
                           json={"to": user_id, "messages": [{"type": "text", "text": "ขออภัยครับ ระบบขัดข้องชั่วคราว"}]})
             except: pass
@@ -629,7 +662,7 @@ async def web_chat(request: Request):
 from ingest_slow import main as run_ingestion_slow
 
 @app.get("/api/status")
-async def get_status():
+def get_status():  # ponytail: sync def = FastAPI runs it in threadpool, blocking requests.get is fine here
     status = {
         "api": "online",
         "ollama": "offline",

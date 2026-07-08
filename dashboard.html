@@ -273,11 +273,29 @@
         fetchModels();
 
         // --- WebSocket Interaction ---
+        // Admin token is handed over from the Bigdata web via URL fragment (#token=...),
+        // then kept in this origin's localStorage so revisits keep working.
+        const tokenMatch = location.hash.match(/^#token=(.+)$/);
+        if (tokenMatch) {
+            localStorage.setItem('km_admin_token', decodeURIComponent(tokenMatch[1]));
+            history.replaceState(null, '', location.pathname);
+        }
+
+        function showUnauthorized() {
+            document.getElementById('flow-container').innerHTML = `
+                <div class="text-center text-slate-400 p-8">
+                    <i class="fas fa-lock text-2xl mb-3"></i><br>
+                    Live Flow ดูได้เฉพาะ admin — กรุณาเปิดหน้านี้จากปุ่ม Web Monitor
+                    ในเมนู KM Assistant บนเว็บ Bigdata ด้วยบัญชี admin
+                </div>`;
+        }
+
         let ws;
         function connectWS() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}/ws/flow`);
-            
+            const token = localStorage.getItem('km_admin_token') || '';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/flow?token=${encodeURIComponent(token)}`);
+
             ws.onmessage = (event) => {
                 try {
                     const msg = JSON.parse(event.data);
@@ -285,7 +303,10 @@
                 } catch(e) {}
             };
 
-            ws.onclose = () => setTimeout(connectWS, 2000);
+            ws.onclose = (e) => {
+                if (e.code === 4401) { showUnauthorized(); return; }
+                setTimeout(connectWS, 2000);
+            };
             ws.onerror = () => ws.close();
         }
 

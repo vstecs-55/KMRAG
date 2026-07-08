@@ -203,52 +203,10 @@
 
     <script>
         let selectedBrand = '';
-        let ws;
         let isProcessing = false;
         const userId = 'web_' + Math.random().toString(36).substr(2, 9);
-
-        // WebSocket Connection
-        function connectWS() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}/ws/flow`);
-            
-            ws.onmessage = (event) => {
-                try {
-                    const msg = JSON.parse(event.data);
-                    handleWSMessage(msg);
-                } catch(e) {}
-            };
-
-            ws.onclose = () => setTimeout(connectWS, 2000);
-            ws.onerror = () => ws.close();
-        }
-
-        function handleWSMessage(msg) {
-            switch(msg.stage) {
-                case 'query_received':
-                    showTyping(true);
-                    break;
-                case 'retrieval_start':
-                    addSystemMessage('กำลังค้นหาข้อมูล...');
-                    break;
-                case 'retrieval_end':
-                    if (msg.files && msg.files.length > 0) {
-                        addSystemMessage(`พบ ${msg.files.length} แหล่งข้อมูลที่เกี่ยวข้อง`);
-                    }
-                    break;
-                case 'llm_start':
-                    addSystemMessage('กำลังวิเคราะห์และเรียบเรียงคำตอบ...');
-                    break;
-                case 'llm_end':
-                    showTyping(false);
-                    if (msg.answer) {
-                        addBotMessage(msg.answer);
-                    }
-                    isProcessing = false;
-                    document.getElementById('send-btn').disabled = false;
-                    break;
-            }
-        }
+        // No WebSocket here: /ws/flow broadcasts everyone's traffic and is admin-only now.
+        // Status is shown locally per user instead.
 
         // UI Functions
         function addBotMessage(text) {
@@ -331,27 +289,26 @@
             addUserMessage(text);
             document.getElementById('chat-input').value = '';
             document.getElementById('char-count').textContent = '0 ตัวอักษร';
-            
+            showTyping(true);
+            addSystemMessage('กำลังค้นหาข้อมูลและเรียบเรียงคำตอบ...');
+
             try {
-                const response = await fetch('/webhook', {
+                const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        events: [{
-                            type: 'message',
-                            message: { type: 'text', text: text },
-                            source: { userId: userId }
-                        }]
-                    })
+                    body: JSON.stringify({ user_id: userId, message: text, brand: selectedBrand })
                 });
-                
+
                 if (!response.ok) {
                     addSystemMessage('เกิดข้อผิดพลาดในการส่งคำถาม');
-                    isProcessing = false;
-                    document.getElementById('send-btn').disabled = false;
+                } else {
+                    const data = await response.json();
+                    if (data.answer) addBotMessage(data.answer);
                 }
             } catch (e) {
                 addSystemMessage('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้');
+            } finally {
+                showTyping(false);
                 isProcessing = false;
                 document.getElementById('send-btn').disabled = false;
             }
@@ -381,7 +338,6 @@
         });
 
         // Initialize
-        connectWS();
         document.getElementById('chat-input').focus();
     </script>
 </body>
